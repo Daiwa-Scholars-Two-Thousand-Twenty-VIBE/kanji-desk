@@ -4,7 +4,7 @@ An unofficial review and lesson app for WaniKani that runs in any browser, with 
 
 **Use it here:** https://daiwa-scholars-two-thousand-twenty-vibe.github.io/kanji-desk/
 
-A copy can also run on Vercel, for networks that block GitHub (see [Hosting on Vercel](#hosting-on-vercel)).
+A copy also runs on Vercel, for networks that block GitHub: https://kanji-desk.vercel.app (see [Hosting on Vercel](#hosting-on-vercel)).
 
 Kanji Desk is not made by, or linked to, WaniKani or Tofugu. Item content (meanings, readings, mnemonics, sentences, audio) comes from the WaniKani API with your token and belongs to Tofugu. None of it is stored in this repo.
 
