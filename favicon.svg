@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#5f3dc4"/>
+  <rect x="96" y="368" width="320" height="28" rx="14" fill="#f4f2ec" opacity="0.55"/>
+  <text x="256" y="330" font-family="Hiragino Sans, Noto Sans CJK JP, Noto Sans JP, Yu Gothic, sans-serif" font-size="270" font-weight="700" fill="#f4f2ec" text-anchor="middle">字</text>
+</svg>
