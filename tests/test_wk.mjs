@@ -93,6 +93,7 @@ test("sync downloads only what changed since last time", async () => {
     `${API}/assignments?updated_after=2026-11-03T00%3A00%3A00Z`,
     `${API}/review_statistics`,
     `${API}/study_materials`,
+    `${API}/level_progressions`,
   ]);
   assert.equal(meta.get("updated.subjects"), "2026-11-04T00:00:00Z");
   assert.equal(r.changed.assignments, 1);

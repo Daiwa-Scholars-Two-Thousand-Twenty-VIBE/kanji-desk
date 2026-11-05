@@ -1,6 +1,7 @@
 // Kanji Desk: screens, sessions and the glue to storage and the API.
-// Answer checking is js/check.js, the quiz flow js/session.js, queues and related items
-// js/items.js, and the API, sync and outbox js/wk.js. Classic scripts, no build step.
+// Answer checking is js/check.js, the quiz flow js/session.js, queues, related items, the
+// item inspector and stats js/items.js, pitch accent js/pitch.js, and the API, sync and outbox
+// js/wk.js. Classic scripts, no build step.
 (function () {
   "use strict";
   const C = window.Check;
@@ -27,10 +28,21 @@
     dailyCap: 0,
     lessonAutoplay: true,
     theme: "system",
+    selfStudyKinds: "both",
+    selfStudyLimit: 20,
+    heatmap: "reviews",
+    inspect: {
+      from: 1,
+      to: 60,
+      types: { radical: true, kanji: true, vocabulary: true },
+      states: { locked: false, lesson: false, apprentice: true, guru: true, master: true, enlightened: true, burned: false },
+      extra: "none",
+      sort: "level",
+    },
   };
   const TYPE_NAME = { radical: "Radical", kanji: "Kanji", vocabulary: "Vocabulary", kana_vocabulary: "Vocabulary" };
   const TYPE_CLASS = { radical: "t-rad", kanji: "t-kan", vocabulary: "t-voc", kana_vocabulary: "t-voc" };
-  const COLLECTION_NAME = { subjects: "Subjects", assignments: "Your items", review_statistics: "Stats", study_materials: "Notes" };
+  const COLLECTION_NAME = { subjects: "Subjects", assignments: "Your items", review_statistics: "Stats", study_materials: "Notes", level_progressions: "Levels" };
   const TOKEN_URL = "https://www.wanikani.com/settings/personal_access_tokens";
   const MIN = 60e3;
 
@@ -52,14 +64,19 @@
   }
   const settings = Object.assign({}, DEFAULTS, load(KEYS.settings) || {});
   settings.types = Object.assign({}, DEFAULTS.types, settings.types);
+  settings.inspect = Object.assign({}, DEFAULTS.inspect, settings.inspect);
+  settings.inspect.types = Object.assign({}, DEFAULTS.inspect.types, settings.inspect.types);
+  settings.inspect.states = Object.assign({}, DEFAULTS.inspect.states, settings.inspect.states);
   const saveSettings = () => save(KEYS.settings, settings);
+  const getSetting = (key) => key.split(".").reduce((o, k) => (o == null ? o : o[k]), settings);
 
   let token = load(KEYS.token) || "";
   let demo = sessionStorage.getItem(KEYS.demo) === "1";
   let store = null;
   let api = null;
   let model = null;
-  let history = [];
+  let history = []; // the last week of finished items on this device
+  let allHistory = null; // all of it, loaded for the stats screen
   let pending = new Set(); // assignment ids answered and waiting in the outbox
   const practiced = new Set(); // test mode: answered this visit, not sent
   let outboxCount = 0;
@@ -69,6 +86,8 @@
 
   let sess = null; // { kind: "reviews" | "lesson" | "practice", label, s }
   let lesson = null; // { batch, idx, phase: "teach" | "quiz" }
+  let lessonQueue = []; // subject ids picked in the lesson picker, taught first
+  const pickSel = new Set(); // the picker's current selection
   let last = null; // the finished session, for the summary screen
   let infoOpen = false;
   let lightningTimer = null;
@@ -84,6 +103,12 @@
     String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const fmtHour = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric" });
+  const fmtDate = (ms) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+  function fmtDur(ms) {
+    const h = Math.floor(ms / 3600e3);
+    if (h < 24) return `${h} h ${Math.floor((ms % 3600e3) / MIN)} min`;
+    return `${Math.floor(h / 24)} d ${h % 24} h`;
+  }
   function fmtWhen(ms) {
     const d = new Date(ms);
     const sameDay = d.toDateString() === new Date().toDateString();
@@ -165,6 +190,9 @@
 
   // ---------- data ----------
   async function openData() {
+    allHistory = null;
+    lessonQueue = [];
+    pickSel.clear();
     if (demo) {
       store = Store.memory();
       const d = Demo.build(Date.now());
@@ -192,8 +220,8 @@
 
   async function loadModel() {
     const [user, ...lists] = await Promise.all([store.getMeta("user"), ...Store.DATA.map((name) => store.getAll(name))]);
-    const [subjects, assignments, review_statistics, study_materials] = lists;
-    model = I.buildModel({ user, subjects, assignments, review_statistics, study_materials });
+    const [subjects, assignments, review_statistics, study_materials, level_progressions] = lists;
+    model = I.buildModel({ user, subjects, assignments, review_statistics, study_materials, level_progressions });
     const box = await store.getAll("outbox");
     pending = new Set(box.map((e) => e.assignmentId));
     outboxCount = box.length;
@@ -287,6 +315,7 @@
     const at = Date.now();
     const h = { subjectId: e.subject.id, at, wrongMeaning: f.wrongMeaning, wrongReading: f.wrongReading, mode: sess.kind };
     history.push(h);
+    if (allHistory) allHistory.push(h);
     store.add("history", h);
     if (sess.kind === "practice" || !e.assignment) return;
     if (!sending()) {
@@ -418,15 +447,20 @@
     else capNote.push(`Apprentice ${c.apprentice}`);
     if (settings.dailyCap > 0) capNote.push(`today ${c.lessonsToday} of ${settings.dailyCap}`);
     const lessonCount = Math.min(lessons.length, room);
+    const waiting = new Set(lessons.map((e) => e.subject.id));
+    const picked = lessonQueue.filter((id) => waiting.has(id)).length;
+    const onLevel = I.levelTimes(model, now).find((x) => x.current && x.level === u.level);
     const orderOpts = Object.entries(I.REVIEW_ORDERS).map(([k, v]) => `<option value="${k}" ${settings.reviewOrder === k ? "selected" : ""}>${v}</option>`).join("");
     const limitOpts = [0, 10, 20, 30, 50, 100].map((v) => `<option value="${v}" ${settings.reviewLimit === v ? "selected" : ""}>${v ? `${v} at most` : "All of them"}</option>`).join("");
     const typeBox = (k, label) => `<label class="tog"><input type="checkbox" data-set="types.${k}" ${settings.types[k] ? "checked" : ""}> ${label}</label>`;
     return `
-      <header class="top">
+      <header class="top hometop">
         <div><h1>Kanji Desk</h1><p class="muted small">${esc(u.username)} · level ${u.level}</p></div>
         <nav class="topnav">
           ${demo ? "" : `<button class="btn small" data-act="sync" ${status.syncing ? "disabled" : ""}>Sync</button>`}
           <a class="btn small" href="#/search">Search</a>
+          <a class="btn small" href="#/items">Items</a>
+          <a class="btn small" href="#/stats">Stats</a>
           <a class="btn small" href="#/settings">Settings</a>
         </nav>
       </header>
@@ -438,8 +472,9 @@
         <section class="card big-card">
           <h2>Lessons</h2>
           <p class="hero">${lessonCount}</p>
-          <p class="muted small">${lessons.length > lessonCount ? `${lessons.length} waiting; your caps allow ${lessonCount}. ` : ""}${capNote.join(" · ")}</p>
+          <p class="muted small">${lessons.length > lessonCount ? `${lessons.length} waiting; your caps allow ${lessonCount}. ` : ""}${picked ? `${picked} you picked go first. ` : ""}${capNote.join(" · ")}</p>
           <button class="btn primary wide" data-act="lessons" ${lessonCount ? "" : "disabled"}>Start lessons</button>
+          ${lessons.length ? `<a class="btn wide small pickbtn" href="#/pick">Pick lessons</a>` : ""}
         </section>
         <section class="card big-card">
           <h2>Reviews</h2>
@@ -456,13 +491,14 @@
       </details>
       ${forecastHTML(I.forecast(model, now, 24, skip), due.length)}
       <section class="card">
-        <h2>Level ${prog.level}</h2>
+        <h2>Level ${prog.level}${onLevel ? ` <span class="muted small">${fmtDur(onLevel.ms)} so far</span>` : ""}</h2>
         <p>${!prog.total ? "No kanji at this level." : `${prog.passed} of ${prog.total} kanji at Guru or above. ${prog.passed >= prog.need ? "Enough to level up." : `${prog.need - prog.passed} more to level up.`}`}</p>
         <div class="meter" role="img" aria-label="${prog.passed} of ${prog.total} kanji passed"><span style="width:${prog.total ? (100 * prog.passed) / prog.total : 0}%"></span><i style="left:90%"></i></div>
         <p class="spread small">
           <span><b>${n(c.apprentice)}</b> Apprentice</span><span><b>${n(c.guru)}</b> Guru</span><span><b>${n(c.master)}</b> Master</span>
           <span><b>${n(c.enlightened)}</b> Enlightened</span><span><b>${n(c.burned)}</b> Burned</span>
         </p>
+        <p class="small"><a href="#/stats">Time on each level and your heatmap →</a></p>
       </section>
       <section class="card">
         <h2>Extra practice <span class="muted small">nothing is sent</span></h2>
@@ -470,7 +506,7 @@
           <button class="btn" data-act="practice" data-which="mistakes" ${mistakes.length ? "" : "disabled"}>Recent mistakes (${mistakes.length})</button>
           <button class="btn" data-act="practice" data-which="leeches" ${leech.length ? "" : "disabled"}>Leeches (${leech.length})</button>
         </div>
-        <p class="muted small">Recent mistakes: items you missed in the last 24 hours on this device. Leeches: items you keep missing, from your WaniKani stats.</p>
+        <p class="muted small">Recent mistakes: items you missed in the last 24 hours on this device. Leeches: items you keep missing, from your WaniKani stats. For any other set, use <a href="#/items">Items</a> and its self-study quiz.</p>
       </section>
       <footer class="foot muted small">Kanji Desk is an unofficial app. It is not made by, or linked to, WaniKani or Tofugu. Item content comes from the WaniKani API and belongs to Tofugu.</footer>`;
   }
@@ -517,7 +553,11 @@
     const now = Date.now();
     const room = I.lessonRoom(model, now, settings);
     const list = I.orderLessons(I.lessonsAvailable(model, skipSet()), settings.lessonOrder);
-    const batch = list.slice(0, Math.min(settings.lessonBatch, room));
+    // Picked items first. They leave the queue once started (they are then no longer waiting).
+    const byId = new Map(list.map((e) => [e.subject.id, e]));
+    lessonQueue = lessonQueue.filter((id) => byId.has(id));
+    const picked = lessonQueue.map((id) => byId.get(id));
+    const batch = (picked.length ? picked : list).slice(0, Math.min(settings.lessonBatch, room));
     if (!batch.length) return nav("home");
     lesson = { batch, idx: 0, phase: "teach", seen: new Set([0]) };
     nav("lessons");
@@ -540,6 +580,7 @@
         <button class="qgo" aria-label="Submit">↵</button>
       </form>
       <div class="qnote" id="qnote" aria-live="polite"></div>
+      <div class="qconf" id="qconf"></div>
       <div class="qacts" id="qacts"></div>
       <div class="qinfo" id="qinfo"></div>
       <p class="keys muted small">Keys: Enter answers and moves on · Backspace retypes · + or − marks right or wrong · F item info · J audio</p>
@@ -599,6 +640,7 @@
     input.placeholder = cur.kind === "reading" ? "答え" : "Your answer";
     input.value = keepText ? old : "";
     $("#qnote").textContent = "";
+    $("#qconf").innerHTML = "";
     $("#qacts").innerHTML = "";
     $("#qinfo").innerHTML = "";
     infoOpen = false;
@@ -618,6 +660,7 @@
     let note = a.result === "close" && a.right ? a.message : "";
     if (a.changed) note = a.right ? "Marked right." : "Marked wrong.";
     $("#qnote").textContent = note;
+    paintConfusions(cur, a);
     const readingShown = cur.kind === "reading" || !s.data.readings || !sess.s.otherTodo().includes("reading");
     const hasAudio = readingShown && audioFor(s).length;
     $("#qacts").innerHTML = `
@@ -628,6 +671,16 @@
       <button class="btn small primary" data-act="next">Next <kbd>↵</kbd></button>`;
     paintInfo();
     input.focus({ preventScroll: true });
+  }
+
+  // After a wrong answer: other items whose answer is what you typed (like ConfusionGuesser).
+  function paintConfusions(cur, a) {
+    const el = $("#qconf");
+    if (!el) return;
+    const s = cur.item.entry.subject;
+    const typed = a.right ? "" : cur.kind === "reading" ? C.normalizeReading(a.text) : C.normalizeMeaning(a.text);
+    const list = typed ? I.confusions(model, s, cur.kind, typed, C.normalizeMeaning) : [];
+    el.innerHTML = list.length ? `<p class="muted small">You may be thinking of:</p>${chips(list)}` : "";
   }
 
   function paintInfo() {
@@ -826,7 +879,7 @@
         ${alts.length ? `<p>Also: ${alts.join(", ")}</p>` : ""}
         ${syn.length ? `<p>Your synonyms: ${syn.join(", ")}</p>` : ""}
         ${pos ? `<p class="muted">${pos}</p>` : ""}
-        ${t === "kana_vocabulary" ? `<p>${audioButtons(s)}</p>` : ""}
+        ${t === "kana_vocabulary" ? `<p>${audioButtons(s)}</p>${slot("pitch", s)}` : ""}
         ${mnemonicHTML("Mnemonic", d.meaning_mnemonic, d.meaning_hint, note("meaning_note"))}`));
     }
     if (!hide.reading && d.readings) {
@@ -839,7 +892,7 @@
         body = `<div class="kreads">${col("onyomi", "On'yomi")}${col("kunyomi", "Kun'yomi")}${col("nanori", "Nanori")}</div>
           <p class="muted small">Bold readings are the ones the quiz accepts.</p>`;
       } else {
-        body = `<p class="ibig" lang="ja">${d.readings.map((r) => esc(r.reading)).join("、")}</p><p>${audioButtons(s)}</p>`;
+        body = `<p class="ibig" lang="ja">${d.readings.map((r) => esc(r.reading)).join("、")}</p><p>${audioButtons(s)}</p>${slot("pitch", s)}`;
       }
       out.push(section("Reading", body + mnemonicHTML("Mnemonic", d.reading_mnemonic, d.reading_hint, note("reading_note"))));
     }
@@ -857,6 +910,8 @@
         const by = new Map(shared.map((h) => [h.subject.id, h.shared.map((r) => esc(primaryMeaning(r))).join(" + ")]));
         out.push(section("Shares radicals", chips(shared.map((h) => h.subject), (k) => `shares ${by.get(k.id)}`)));
       }
+      // The sound part gives the reading away, so it waits until the reading is answered.
+      if (!hide.reading) out.push(slot("keisei", s));
     }
     if (t === "vocabulary") {
       const comps = subj(d.component_subject_ids);
@@ -920,6 +975,278 @@
   function closeModal() {
     modalStack.length = 0;
     paintModal();
+  }
+
+
+  // ---------- extra data: sound parts and pitch accent ----------
+  // From the Kanjium database (CC BY-SA 4.0, see data/LICENSE.md). Fetched the first time an
+  // item needs it; until then a placeholder sits in the item info and is filled in place.
+  const extra = { keisei: null, pitch: null };
+  const extraLoading = {};
+  const EXTRA_URL = { keisei: "data/keisei.json", pitch: "data/pitch.tsv" };
+  function needExtra(name) {
+    if (extra[name] || extraLoading[name]) return;
+    extraLoading[name] = fetch(EXTRA_URL[name])
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return name === "keisei" ? r.json() : r.text();
+      })
+      .then((d) => {
+        extra[name] = name === "pitch" ? Pitch.parse(d) : d;
+        fillSlots(name);
+      })
+      .catch(() => {
+        extraLoading[name] = null; // try again the next time an item asks
+        document.querySelectorAll(`.slot[data-slot="${name}"]`).forEach((el) => el.remove());
+      });
+  }
+  const extraHTML = (name, s) => (name === "pitch" ? pitchHTML(s) : keiseiHTML(s));
+  function slot(name, s) {
+    if (extra[name]) return extraHTML(name, s);
+    needExtra(name);
+    return `<div class="slot" data-slot="${name}" data-id="${s.id}"></div>`;
+  }
+  function fillSlots(name) {
+    document.querySelectorAll(`.slot[data-slot="${name}"]`).forEach((el) => {
+      const s = model && model.subjects.get(Number(el.dataset.id));
+      el.outerHTML = s ? extraHTML(name, s) : "";
+    });
+  }
+
+  const PITCH_NAME = {
+    heiban: "flat, no drop (heiban)",
+    atamadaka: "drops after the first mora (atamadaka)",
+    nakadaka: "drops inside the word (nakadaka)",
+    odaka: "drops after the word (odaka)",
+  };
+  // One line per reading and pattern: a line over the high morae, a step where it rises or
+  // drops, and an empty box for a particle after the word.
+  function pitchHTML(s) {
+    const kana = s.object === "kana_vocabulary";
+    const readings = kana ? [s.data.characters] : (s.data.readings || []).map((r) => r.reading);
+    const rows = [];
+    for (const r of readings) {
+      for (const drop of Pitch.lookup(extra.pitch, s.data.characters, kana ? "" : r)) {
+        const mo = Pitch.morae(r);
+        const p = Pitch.pattern(mo.length, drop);
+        let prev = null;
+        const cells = mo.map((m, i) => {
+          const h = p.high[i];
+          const cls = `mo ${h ? "hi" : "lo"}${prev !== null && prev !== h ? " step" : ""}`;
+          prev = h;
+          return `<span class="${cls}">${esc(m)}</span>`;
+        });
+        cells.push(`<span class="mo pt ${p.particle ? "hi" : "lo"}${prev !== p.particle ? " step" : ""}" title="a particle after the word"></span>`);
+        rows.push(`<p class="pitch"><span class="pline" lang="ja" role="img" aria-label="${esc(r)}: ${esc(PITCH_NAME[Pitch.kind(mo.length, drop)])}">${cells.join("")}</span>
+          <span class="muted small">[${drop}] ${PITCH_NAME[Pitch.kind(mo.length, drop)]}</span></p>`);
+      }
+    }
+    return `<div class="pitches"><h4>Pitch accent</h4>${rows.length ? rows.join("") : `<p class="muted small">Not in the pitch list.</p>`}</div>`;
+  }
+
+  // Sound part (keisei): the phonetic component, and other kanji built on it.
+  function keiseiHTML(s) {
+    const f = I.soundFamily(model, s, extra.keisei, (r) => W.toHiragana(r));
+    if (!f) return "";
+    const reads = `<span lang="ja">${esc(f.readings.join("、"))}</span>`;
+    let lead;
+    if (f.isPart) lead = `<p>This kanji is a sound part itself. Kanji built on it are often read ${reads}.</p>`;
+    else {
+      const what = f.compound ? "A sound-and-meaning kanji: one part hints at the meaning, the other at the sound." : "This kanji has a sound part.";
+      const follows = f.shared.length ? `This kanji reads <span lang="ja">${esc(f.shared.join("、"))}</span>, like its sound part.` : "Its on'yomi does not follow the sound part.";
+      lead = `<p>${what} The sound part <span class="kpart" lang="ja">${esc(f.part)}</span> is read ${reads}. ${follows}</p>${f.partSubject ? chips([f.partSubject]) : ""}`;
+    }
+    const shared = new Map(f.family.map((x) => [x.subject.id, x.shared]));
+    const fam = f.family.length
+      ? `<h4>Other kanji with this sound part</h4>${chips(f.family.map((x) => x.subject), (k) => {
+        const r = shared.get(k.id);
+        return r.length ? `reads <span lang="ja">${esc(r.join("、"))}</span>` : "reads differently";
+      })}`
+      : "";
+    return section("Sound part", `${lead}${fam}<p class="muted small">From the Kanjium database (CC BY-SA 4.0).</p>`);
+  }
+
+  // ---------- items: inspector and self-study ----------
+  const STATE_NAME = { locked: "Locked", lesson: "In lessons", apprentice: "Apprentice", guru: "Guru", master: "Master", enlightened: "Enlightened", burned: "Burned" };
+  const ROW_LIMIT = 300;
+  let itemRows = [];
+  const quizable = (rows) => (settings.selfStudyKinds === "reading" ? rows.filter((r) => C.questionsFor(r.subject).includes("reading")) : rows);
+  function viewItems() {
+    const now = Date.now();
+    itemRows = I.inspect(model, settings.inspect, now, history);
+    const box = (key, label) => `<label class="tog"><input type="checkbox" data-set="${key}" ${getSetting(key) ? "checked" : ""}> ${label}</label>`;
+    const sel = (key, opts, num) => `<select data-set="${key}" ${num ? "data-num" : ""}>${opts.map(([v, l]) => `<option value="${v}" ${String(getSetting(key)) === String(v) ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const lvl = (key) => `<input type="number" inputmode="numeric" min="1" max="60" data-set="${key}" data-num value="${getSetting(key)}" aria-label="${key.endsWith("from") ? "From level" : "To level"}">`;
+    const pool = quizable(itemRows).length;
+    const quizN = settings.selfStudyLimit ? Math.min(settings.selfStudyLimit, pool) : pool;
+    const rows = itemRows.slice(0, ROW_LIMIT).map((r) => {
+      const s = r.subject;
+      return `<tr>
+        <td><button class="ichar ${TYPE_CLASS[s.object]}" data-act="open" data-id="${s.id}" lang="ja">${charsHTML(s)}</button></td>
+        <td>${esc(primaryMeaning(s))}</td>
+        <td lang="ja">${esc(primaryReading(s))}</td>
+        <td class="num">${s.data.level}</td>
+        <td>${r.stage > 0 ? I.STAGE_NAMES[r.stage] : STATE_NAME[r.state]}</td>
+        <td class="num">${r.accuracy == null ? "" : `${r.accuracy}%`}</td>
+        <td>${r.next ? (r.next <= now ? "now" : fmtWhen(r.next)) : ""}</td>
+      </tr>`;
+    }).join("");
+    return `<header class="top"><h1>Items</h1><nav class="topnav"><a class="btn small" href="#/">Home</a></nav></header>
+      <section class="card">
+        <div class="field">Levels ${lvl("inspect.from")} to ${lvl("inspect.to")}</div>
+        <div class="field">Types ${box("inspect.types.radical", "Radicals")} ${box("inspect.types.kanji", "Kanji")} ${box("inspect.types.vocabulary", "Vocabulary")}</div>
+        <div class="field">Stages ${I.STATES.map((k) => box(`inspect.states.${k}`, STATE_NAME[k])).join(" ")}</div>
+        <label class="field">Only ${sel("inspect.extra", Object.entries(I.EXTRA_FILTERS))}</label>
+        <label class="field">Sort by ${sel("inspect.sort", Object.entries(I.INSPECT_SORTS))}</label>
+      </section>
+      <section class="card">
+        <h2>Self-study quiz <span class="muted small">nothing is sent</span></h2>
+        <div class="row">
+          <label class="field">Ask ${sel("selfStudyKinds", [["both", "Meaning and reading"], ["meaning", "Meaning only"], ["reading", "Reading only"]])}</label>
+          <label class="field">How many ${sel("selfStudyLimit", [[10, "10"], [20, "20"], [50, "50"], [100, "100"], [0, "All"]], true)}</label>
+        </div>
+        <button class="btn primary" data-act="selfstudy" ${quizN ? "" : "disabled"}>Quiz ${n(quizN)} item${quizN === 1 ? "" : "s"}</button>
+        <p class="muted small">Picked at random from the list below. Item info stays hidden until you answer.</p>
+      </section>
+      <section class="card">
+        <h2>${n(itemRows.length)} item${itemRows.length === 1 ? "" : "s"}</h2>
+        ${itemRows.length ? `<div class="tablewrap"><table class="itable"><thead><tr><th>Item</th><th>Meaning</th><th>Reading</th><th class="num">Level</th><th>Stage</th><th class="num">Right</th><th>Next review</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No items match these filters.</p>`}
+        ${itemRows.length > ROW_LIMIT ? `<p class="muted small">Showing the first ${ROW_LIMIT}. Narrow the filters to see the rest.</p>` : ""}
+      </section>`;
+  }
+  function startSelfStudy() {
+    const kinds = settings.selfStudyKinds === "both" ? null : [settings.selfStudyKinds];
+    let rows = I.shuffle(quizable(itemRows));
+    if (settings.selfStudyLimit) rows = rows.slice(0, settings.selfStudyLimit);
+    if (!rows.length) return;
+    const entries = rows.map((r) => (r.assignment ? I.entryOf(model, r.assignment) : { key: `s${r.subject.id}`, subject: r.subject, synonyms: I.synonymsFor(model, r.subject.id), assignment: null }));
+    makeSession("practice", entries, "Self-study", kinds ? { kinds } : {});
+    nav("quiz");
+  }
+
+  // ---------- stats: heatmap, level times, the week ahead ----------
+  const plural = (k, v) => `${n(v)} ${v === 1 ? k.replace(/s$/, "") : k}`;
+  function heatHTML(byDay, now, key) {
+    const today = new Date(I.startOfDay(now));
+    const start = new Date(today);
+    start.setDate(start.getDate() - 7 * 52 - ((today.getDay() + 6) % 7)); // a Monday, 52 weeks back
+    let max = 0;
+    for (const v of byDay.values()) max = Math.max(max, v[key]);
+    const cells = [];
+    const months = [];
+    let col = 1;
+    for (const d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const v = (byDay.get(d.getTime()) || {})[key] || 0;
+      const row = (d.getDay() + 6) % 7;
+      if (row === 0 && d.getDate() <= 7) months.push(`<span style="grid-column:${col}">${d.toLocaleDateString([], { month: "short" })}</span>`);
+      const tip = `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}: ${plural(key, v)}`;
+      const lvl = v ? Math.min(4, Math.ceil((4 * v) / max)) : 0;
+      cells.push(`<i class="hm${lvl}" style="grid-row:${row + 1};grid-column:${col}" data-tip="${esc(tip)}"></i>`);
+      if (row === 6) col++;
+    }
+    return `<div class="heat-wrap" id="heatwrap" style="--cols:${col}"><div class="heat-months">${months.join("")}</div>
+      <div class="heat" role="img" aria-label="${esc(`${key} per day for the last year`)}">${cells.join("")}</div></div>
+      <p class="heat-key muted small"><span id="heattip">Point at a day to see its count.</span><span>Less <i class="hm0"></i><i class="hm1"></i><i class="hm2"></i><i class="hm3"></i><i class="hm4"></i> More</span></p>`;
+  }
+  function viewStats() {
+    const now = Date.now();
+    const key = settings.heatmap === "lessons" ? "lessons" : "reviews";
+    const byDay = I.activity(model, allHistory || [], now);
+    const days = [...byDay.entries()].filter(([, v]) => v[key]);
+    const total = days.reduce((t, [, v]) => t + v[key], 0);
+    const best = days.reduce((b, d) => (!b || d[1][key] > b[1][key] ? d : b), null);
+    const recent = [...Array(14)].map((_, i) => {
+      const d = new Date(I.startOfDay(now));
+      d.setDate(d.getDate() - i);
+      const v = byDay.get(d.getTime()) || { lessons: 0, reviews: 0, missed: 0 };
+      return `<tr><td>${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}</td><td class="num">${v.reviews}</td><td class="num">${v.reviews ? `${Math.round((100 * (v.reviews - v.missed)) / v.reviews)}%` : ""}</td><td class="num">${v.lessons}</td></tr>`;
+    }).join("");
+
+    const lt = I.levelTimes(model, now);
+    const past = lt.filter((x) => !x.current);
+    const med = I.median(past.map((x) => x.ms));
+    const cur = lt.find((x) => x.current);
+    const maxMs = Math.max(1, ...lt.map((x) => x.ms));
+    const levelRows = lt.slice().reverse().map((x) => `<tr class="${x.current ? "cur" : ""}">
+        <td class="num">${x.level}</td>
+        <td class="num">${fmtDur(x.ms)}${x.current ? " so far" : ""}</td>
+        <td class="ltbar"><span style="width:${Math.max(1, (100 * x.ms) / maxMs)}%"></span></td>
+        <td class="muted small">${fmtDate(x.start)}${x.end ? ` to ${fmtDate(x.end)}` : ""}</td>
+      </tr>`).join("");
+
+    const week = I.forecastDays(model, now, 7);
+    const dueNow = I.reviewsDue(model, now, skipSet()).length;
+    const wmax = Math.max(1, ...week.map((b) => b.count));
+    const weekRows = week.map((b, i) => `<tr><td>${i ? new Date(b.at).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) : "Rest of today"}</td>
+        <td class="num">${n(b.count)}</td><td class="ltbar"><span style="width:${b.count ? Math.max(1, (100 * b.count) / wmax) : 0}%"></span></td></tr>`).join("");
+
+    return `<header class="top"><h1>Stats</h1><nav class="topnav"><a class="btn small" href="#/">Home</a></nav></header>
+      <section class="card">
+        <h2>Heatmap</h2>
+        <label class="field">Show <select data-set="heatmap"><option value="reviews" ${key === "reviews" ? "selected" : ""}>Reviews done here</option><option value="lessons" ${key === "lessons" ? "selected" : ""}>Lessons, all devices</option></select></label>
+        ${heatHTML(byDay, now, key)}
+        <p class="spread small">
+          <span><b>${plural(key, total)}</b> in the last year</span>
+          <span><b>${n(days.length)}</b> day${days.length === 1 ? "" : "s"} with any</span>
+          <span><b>${n(I.streak(byDay, now, key))}</b> day streak</span>
+          ${best ? `<span>Busiest: <b>${n(best[1][key])}</b> on ${fmtDate(best[0])}</span>` : ""}
+        </p>
+        <p class="muted small">${key === "reviews" ? "Only reviews done in Kanji Desk in this browser. WaniKani no longer lets apps download your past reviews, so reviews on the site, your phone or another browser are not counted." : "Lessons come from WaniKani, so every device counts."}</p>
+        <details class="fc-table"><summary>The last 14 days as a list</summary><table><thead><tr><th>Day</th><th class="num">Reviews</th><th class="num">Right</th><th class="num">Lessons</th></tr></thead><tbody>${recent}</tbody></table></details>
+      </section>
+      <section class="card">
+        <h2>Time on each level</h2>
+        ${lt.length ? `<p>${cur ? `Level ${cur.level}: <b>${fmtDur(cur.ms)}</b> so far. ` : ""}${past.length ? `Your middle (median) level took <b>${fmtDur(med)}</b>.` : ""}</p>
+        <div class="tablewrap"><table class="lt"><thead><tr><th class="num">Level</th><th class="num">Time</th><th></th><th>Dates</th></tr></thead><tbody>${levelRows}</tbody></table></div>`
+          : `<p class="muted">No level history yet. It downloads with the next sync.</p>`}
+        <p class="muted small">From when a level unlocked until you passed it. Levels left behind by a reset are not shown.</p>
+      </section>
+      <section class="card">
+        <h2>The week ahead</h2>
+        <p>${n(dueNow)} due now, then:</p>
+        <div class="tablewrap"><table class="lt"><tbody>${weekRows}</tbody></table></div>
+      </section>`;
+  }
+
+  // ---------- lesson picker ----------
+  function viewPick() {
+    const avail = I.orderLessons(I.lessonsAvailable(model, skipSet()), "wk");
+    const room = I.lessonRoom(model, Date.now(), settings);
+    const ids = new Set(avail.map((e) => e.subject.id));
+    for (const id of pickSel) if (!ids.has(id)) pickSel.delete(id);
+    const groups = new Map();
+    for (const e of avail) {
+      const k = e.subject.data.level;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e.subject);
+    }
+    const tile = (s) => `<button class="ptile ${TYPE_CLASS[s.object]} ${pickSel.has(s.id) ? "on" : ""}" data-act="pickone" data-id="${s.id}" aria-pressed="${pickSel.has(s.id)}" title="${esc(primaryMeaning(s))}"><span lang="ja">${charsHTML(s)}</span><small>${esc(primaryMeaning(s))}</small></button>`;
+    const body = [...groups].map(([lvl, list]) => `<section class="card"><h2>Level ${lvl} <button class="link small" data-act="picksel" data-which="level:${lvl}">pick all</button></h2>
+      <div class="ptiles">${list.map(tile).join("")}</div></section>`).join("");
+    const capNote = Number.isFinite(room) ? ` Your caps allow ${room} right now.` : "";
+    return `<header class="top"><h1>Pick lessons</h1><nav class="topnav"><a class="btn small" href="#/">Home</a></nav></header>
+      <section class="card">
+        <p><b>${pickSel.size}</b> picked of ${avail.length} waiting.${capNote}</p>
+        <div class="row">
+          <button class="btn small" data-act="picksel" data-which="kanji">All kanji</button>
+          <button class="btn small" data-act="picksel" data-which="vocabulary">All vocabulary</button>
+          <button class="btn small" data-act="picksel" data-which="radical">All radicals</button>
+          <button class="btn small" data-act="picksel" data-which="none">None</button>
+        </div>
+        <button class="btn primary wide" data-act="pickstart" ${pickSel.size && room ? "" : "disabled"}>Learn these, ${settings.lessonBatch} at a time</button>
+        <p class="muted small">Picked items are taught first, in the order shown, then lessons go back to your usual order. ${lessonQueue.length ? `<button class="link" data-act="pickclear">Forget my earlier picks (${lessonQueue.length})</button>` : ""}</p>
+      </section>
+      ${body || `<p class="muted">No lessons waiting.</p>`}`;
+  }
+  function pickWhich(which) {
+    const avail = I.lessonsAvailable(model, skipSet()).map((e) => e.subject);
+    if (which === "none") return pickSel.clear();
+    const match = which.startsWith("level:")
+      ? (s) => s.data.level === Number(which.slice(6))
+      : (s) => (s.object === "kana_vocabulary" ? "vocabulary" : s.object) === which;
+    const list = avail.filter(match);
+    const all = list.every((s) => pickSel.has(s.id));
+    for (const s of list) all ? pickSel.delete(s.id) : pickSel.add(s.id);
   }
 
   // ---------- search ----------
@@ -999,13 +1326,15 @@
     const key = el.dataset.set;
     let v = el.type === "checkbox" ? el.checked : el.value;
     if (el.hasAttribute("data-num")) v = Math.max(0, parseInt(v, 10) || 0);
-    if (key.startsWith("types.")) settings.types[key.slice(6)] = v;
-    else settings[key] = v;
+    if (key === "inspect.from" || key === "inspect.to") v = Math.min(60, Math.max(1, v || 1));
+    const path = key.split(".");
+    const leaf = path.pop();
+    path.reduce((o, k) => o[k], settings)[leaf] = v;
     saveSettings();
     if (key === "theme") applyTheme();
     // Items tried in test mode are still due on WaniKani: offer them again for real.
     if (key === "testMode" && !v) practiced.clear();
-    if (screenOf()[0] === "home") render();
+    if (["home", "items", "stats"].includes(screenOf()[0])) render();
   }
 
   // ---------- routing ----------
@@ -1035,6 +1364,22 @@
         return;
       case "settings":
         return paint(viewSettings());
+      case "items":
+        return paint(viewItems());
+      case "pick":
+        return paint(viewPick());
+      case "stats":
+        if (!allHistory) {
+          paint(`<header class="top"><h1>Stats</h1><nav class="topnav"><a class="btn small" href="#/">Home</a></nav></header><p class="muted">Loading…</p>`);
+          store.getAll("history").catch(() => []).then((h) => {
+            allHistory = h;
+            if (screenOf()[0] === "stats") render();
+          });
+          return;
+        }
+        paint(viewStats());
+        $("#heatwrap").scrollLeft = 1e6; // the latest weeks, on a narrow screen
+        return;
       default:
         return paint(viewHome());
     }
@@ -1143,6 +1488,30 @@
       case "lquiz":
         lessonQuiz();
         break;
+      case "selfstudy":
+        startSelfStudy();
+        break;
+      case "pickone": {
+        const id = Number(t.dataset.id);
+        pickSel.has(id) ? pickSel.delete(id) : pickSel.add(id);
+        render();
+        break;
+      }
+      case "picksel":
+        pickWhich(t.dataset.which);
+        render();
+        break;
+      case "pickclear":
+        lessonQueue = [];
+        render();
+        break;
+      case "pickstart": {
+        const avail = I.orderLessons(I.lessonsAvailable(model, skipSet()), "wk");
+        lessonQueue = avail.map((e) => e.subject.id).filter((id) => pickSel.has(id));
+        pickSel.clear();
+        startLessons();
+        break;
+      }
       case "redownload":
         if (!confirm("Download all your WaniKani data again? It takes a minute or two.")) return;
         for (const name of WK.COLLECTIONS) await store.setMeta(`updated.${name}`, null);
@@ -1155,6 +1524,8 @@
         model = null;
         sess = null;
         lesson = null;
+        lessonQueue = [];
+        allHistory = null;
         nav("home");
         break;
     }
@@ -1168,6 +1539,12 @@
 
   document.addEventListener("change", (e) => {
     if (e.target.dataset && e.target.dataset.set) setSetting(e.target);
+  });
+
+  // The heatmap's day under the pointer (or tapped), in one line under the grid.
+  document.addEventListener("mouseover", (e) => {
+    const tip = e.target.matches && e.target.matches(".heat i") && $("#heattip");
+    if (tip) tip.textContent = e.target.dataset.tip;
   });
 
   document.addEventListener("input", (e) => {

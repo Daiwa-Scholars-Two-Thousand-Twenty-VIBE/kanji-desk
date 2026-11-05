@@ -38,12 +38,14 @@
       meaning_mnemonic: "One flat line, like the <radical>ground</radical> you stand on." }),
     subject(2, "radical", 1, 1, { characters: "口", meanings: [M("Mouth", true)], amalgamation_subject_ids: [10], character_images: [],
       meaning_mnemonic: "A square hole that opens and shuts: a <radical>mouth</radical>." }),
-    subject(3, "radical", 1, 2, { characters: "日", meanings: [M("Sun", true)], amalgamation_subject_ids: [11, 12], character_images: [],
+    subject(3, "radical", 1, 2, { characters: "日", meanings: [M("Sun", true)], amalgamation_subject_ids: [11, 12, 17], character_images: [],
       meaning_mnemonic: "A window with one bar across it, and the <radical>sun</radical> shining through." }),
     subject(4, "radical", 1, 3, { characters: "木", meanings: [M("Tree", true)], amalgamation_subject_ids: [14, 15], character_images: [],
       meaning_mnemonic: "A trunk, two branches and roots: a <radical>tree</radical>." }),
     subject(5, "radical", 1, 4, { characters: "人", meanings: [M("Person", true)], amalgamation_subject_ids: [13], character_images: [],
       meaning_mnemonic: "Two legs walking: a <radical>person</radical>." }),
+    subject(6, "radical", 3, 4, { characters: "青", meanings: [M("Blue", true)], amalgamation_subject_ids: [16, 17], character_images: [],
+      meaning_mnemonic: "New leaves over a full moon, and the whole night sky turns <radical>blue</radical>." }),
 
     subject(10, "kanji", 1, 5, { characters: "口", meanings: [M("Mouth", true)], component_subject_ids: [2], amalgamation_subject_ids: [20],
       visually_similar_subject_ids: [11, 12],
@@ -77,6 +79,16 @@
       readings: [R("き", "kunyomi", true, true), R("もく", "onyomi", false, false)],
       meaning_mnemonic: "The <radical>tree</radical> radical is the <kanji>tree</kanji> kanji.",
       reading_mnemonic: "A <kanji>tree</kanji> is a key (<reading>き</reading>) to shade." }),
+    subject(16, "kanji", 3, 5, { characters: "青", meanings: [M("Blue", true)], component_subject_ids: [6], amalgamation_subject_ids: [],
+      visually_similar_subject_ids: [],
+      readings: [R("せい", "onyomi", true, true), R("しょう", "onyomi", false, false), R("あお", "kunyomi", false, false)],
+      meaning_mnemonic: "The <radical>blue</radical> radical is the <kanji>blue</kanji> kanji.",
+      reading_mnemonic: "A <kanji>blue</kanji> sail (<reading>せい</reading>l) on a calm sea." }),
+    subject(17, "kanji", 3, 6, { characters: "晴", meanings: [M("Clear Up", true), M("Sunny")], component_subject_ids: [3, 6], amalgamation_subject_ids: [],
+      visually_similar_subject_ids: [],
+      readings: [R("せい", "onyomi", true, true), R("は", "kunyomi", false, false)],
+      meaning_mnemonic: "The <radical>sun</radical> comes out and the sky goes <radical>blue</radical>: the weather has <kanji>cleared up</kanji>.",
+      reading_mnemonic: "When it <kanji>clears up</kanji>, every boat sets <reading>せい</reading>l." }),
 
     subject(20, "vocabulary", 2, 4, { characters: "人口", meanings: [M("Population", true)], component_subject_ids: [13, 10],
       readings: [VR("じんこう")], parts_of_speech: ["noun"],
@@ -161,14 +173,30 @@
     const stat = (id, sid, type, mc, mi, ms, rc, ri, rs) => ({
       id, object: "review_statistic",
       data: { subject_id: sid, subject_type: type, meaning_correct: mc, meaning_incorrect: mi, meaning_current_streak: ms, meaning_max_streak: ms,
-        reading_correct: rc, reading_incorrect: ri, reading_current_streak: rs, reading_max_streak: rs, percentage_correct: 0, hidden: false },
+        reading_correct: rc, reading_incorrect: ri, reading_current_streak: rs, reading_max_streak: rs,
+        percentage_correct: Math.round((100 * (mc + rc)) / Math.max(1, mc + mi + rc + ri)), hidden: false },
     });
     const review_statistics = [
       stat(5012, 12, "kanji", 6, 5, 1, 4, 6, 1),
       stat(5011, 11, "kanji", 5, 1, 3, 5, 0, 4),
       stat(5020, 20, "vocabulary", 2, 0, 2, 1, 3, 1),
     ];
-    return { user, subjects: SUBJECTS, assignments, study_materials, review_statistics };
+    const DAY = 24 * HOUR;
+    // Levels 1 and 2 passed, level 3 under way.
+    const level_progressions = [[1, 30, 21], [2, 21, 12], [3, 12, null]].map(([level, from, to]) => ({
+      id: 9000 + level,
+      object: "level_progression",
+      data: {
+        level,
+        created_at: iso(now - from * DAY),
+        unlocked_at: iso(now - from * DAY),
+        started_at: iso(now - from * DAY + 2 * HOUR),
+        passed_at: to === null ? null : iso(now - to * DAY),
+        completed_at: null,
+        abandoned_at: null,
+      },
+    }));
+    return { user, subjects: SUBJECTS, assignments, study_materials, review_statistics, level_progressions };
   }
 
   return { SUBJECTS, build };

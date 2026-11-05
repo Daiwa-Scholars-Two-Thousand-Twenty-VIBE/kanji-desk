@@ -4,7 +4,8 @@
 // Everything reads from one `model`, built by the app from the cached API data:
 //   { user, subjects: Map(id -> subject), assignments: Map(id -> assignment),
 //     bySubject: Map(subjectId -> assignment), stats: Map(subjectId -> review_statistic),
-//     materials: Map(subjectId -> study_material) }
+//     materials: Map(subjectId -> study_material), levels: Map(level -> level_progression),
+//     index: lookups built on first use (per meaning normaliser), dropped when subjects change }
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -45,15 +46,24 @@
         m.bySubject.set(it.data.subject_id, it);
       } else if (name === "review_statistics") m.stats.set(it.data.subject_id, it);
       else if (name === "study_materials") m.materials.set(it.data.subject_id, it);
+      else if (name === "level_progressions" && newerLevel(m.levels.get(it.data.level), it)) m.levels.set(it.data.level, it);
     }
+    if (name === "subjects") m.index = null;
+  }
+  // A reset leaves the old progression marked abandoned; the live one wins, then the newest.
+  function newerLevel(old, p) {
+    if (!old || old.id === p.id) return true;
+    if (!!old.data.abandoned_at !== !!p.data.abandoned_at) return !!old.data.abandoned_at;
+    return (p.data.created_at || "") > (old.data.created_at || "");
   }
 
-  function buildModel({ user, subjects = [], assignments = [], review_statistics = [], study_materials = [] }) {
-    const m = { user, subjects: new Map(), assignments: new Map(), bySubject: new Map(), stats: new Map(), materials: new Map() };
+  function buildModel({ user, subjects = [], assignments = [], review_statistics = [], study_materials = [], level_progressions = [] }) {
+    const m = { user, subjects: new Map(), assignments: new Map(), bySubject: new Map(), stats: new Map(), materials: new Map(), levels: new Map(), index: null };
     apply(m, "subjects", subjects);
     apply(m, "assignments", assignments);
     apply(m, "review_statistics", review_statistics);
     apply(m, "study_materials", study_materials);
+    apply(m, "level_progressions", level_progressions);
     return m;
   }
 
@@ -249,6 +259,13 @@
 
   // Items you keep missing: misses divided by (current streak ^ 1.5), worst half counts.
   // A score of 1 or more is a leech.
+  const hasReading = (s) => s.object === "kanji" || s.object === "vocabulary";
+  function leechScore(s, st) {
+    if (!st) return 0;
+    const d = st.data;
+    const half = (wrong, streak) => wrong / Math.pow(Math.max(1, streak), 1.5);
+    return Math.max(half(d.meaning_incorrect, d.meaning_current_streak), hasReading(s) ? half(d.reading_incorrect, d.reading_current_streak) : 0);
+  }
   function leeches(m, limit = 30) {
     const out = [];
     for (const st of m.stats.values()) {
@@ -258,9 +275,7 @@
       if (!a || a.data.hidden || !a.data.started_at || a.data.srs_stage >= 9) continue;
       const s = m.subjects.get(d.subject_id);
       if (!usable(m, s)) continue;
-      const half = (wrong, streak) => wrong / Math.pow(Math.max(1, streak), 1.5);
-      const score = Math.max(half(d.meaning_incorrect, d.meaning_current_streak),
-        s.object === "radical" || s.object === "kana_vocabulary" ? 0 : half(d.reading_incorrect, d.reading_current_streak));
+      const score = leechScore(s, st);
       if (score >= 1) out.push({ entry: entryOf(m, a), score });
     }
     return out.sort((x, y) => y.score - x.score).slice(0, limit);
@@ -307,11 +322,230 @@
       .map((x) => x.s);
   }
 
+  // ---------- lookups built once per set of subjects ----------
+  // meaning (normalised by the caller's `norm`) -> subjects, reading (kana) -> subjects,
+  // characters -> kanji.
+  function indexOf(m, norm) {
+    if (!m.index) m.index = new Map();
+    if (m.index.has(norm)) return m.index.get(norm);
+    const ix = { meaning: new Map(), reading: new Map(), kanji: new Map() };
+    const add = (map, key, s) => {
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      if (!map.get(key).includes(s)) map.get(key).push(s);
+    };
+    for (const s of m.subjects.values()) {
+      if (!usable(m, s)) continue;
+      for (const x of s.data.meanings || []) add(ix.meaning, norm(x.meaning), s);
+      for (const x of s.data.auxiliary_meanings || []) if (x.type === "whitelist") add(ix.meaning, norm(x.meaning), s);
+      for (const x of s.data.readings || []) add(ix.reading, x.reading, s);
+      if (s.object === "kana_vocabulary") add(ix.reading, s.data.characters, s);
+      if (s.object === "kanji" && s.data.characters) ix.kanji.set(s.data.characters, s);
+    }
+    m.index.set(norm, ix);
+    return ix;
+  }
+  const ident = (x) => String(x || "").trim().toLowerCase();
+
+  // After a wrong answer: other items whose answer is what you typed, so you can see what you
+  // mixed it up with. `text` is already normalised: `norm(meaning)` or the reading in kana.
+  // Only items you have learned or could have (up to your level). Look-alikes first, then
+  // items that share a part, then the rest by level.
+  function confusions(m, subject, kind, text, norm = ident, limit = 4) {
+    if (!text) return [];
+    const ix = indexOf(m, norm);
+    const hits = ((kind === "reading" ? ix.reading : ix.meaning).get(text) || []).filter((s) => s.id !== subject.id);
+    const level = m.user ? m.user.data.level : 60;
+    const alike = new Set(subject.data.visually_similar_subject_ids || []);
+    const parts = new Set([...(subject.data.component_subject_ids || []), ...(subject.data.amalgamation_subject_ids || [])]);
+    const rank = (s) => (alike.has(s.id) ? 0 : parts.has(s.id) ? 1 : s.object === subject.object ? 2 : 3);
+    return hits
+      .filter((s) => learned(m, s.id) || s.data.level <= level)
+      .sort((x, y) => rank(x) - rank(y) || learned(m, y.id) - learned(m, x.id) || x.data.level - y.data.level)
+      .slice(0, limit);
+  }
+
+  // Sound parts (keisei): `data` is data/keisei.json. For a kanji with a phonetic component,
+  // the component, its readings, whether this kanji is a sound-plus-meaning compound, and the
+  // other WaniKani kanji built on the same component, each with the readings it shares.
+  function soundFamily(m, subject, data, toHira = (x) => x) {
+    if (!data || subject.object !== "kanji") return null;
+    const row = data.kanji[subject.data.characters];
+    if (!row) return null;
+    const [part, kind] = row;
+    const ph = data.phonetics[part];
+    if (!ph) return null;
+    const ix = indexOf(m, ident);
+    const readings = ph[0];
+    const onyomi = (s) => (s.data.readings || []).filter((r) => r.type === "onyomi").map((r) => toHira(r.reading));
+    const family = [];
+    for (const [ch, r] of Object.entries(data.kanji)) {
+      if (r[0] !== part || ch === subject.data.characters) continue;
+      const s = ix.kanji.get(ch);
+      if (s) family.push({ subject: s, shared: onyomi(s).filter((x) => readings.includes(x)) });
+    }
+    family.sort((x, y) => (y.shared.length > 0) - (x.shared.length > 0) || learned(m, y.subject.id) - learned(m, x.subject.id) || x.subject.data.level - y.subject.data.level);
+    return {
+      part,
+      partSubject: part === subject.data.characters ? null : ix.kanji.get(part) || null,
+      readings,
+      single: ph[1] === "s",
+      compound: kind === "ps",
+      isPart: part === subject.data.characters,
+      shared: onyomi(subject).filter((x) => readings.includes(x)),
+      family,
+    };
+  }
+
+  // ---------- item inspector ----------
+  const STATES = ["locked", "lesson", "apprentice", "guru", "master", "enlightened", "burned"];
+  function stateOf(m, s) {
+    const a = m.bySubject.get(s.id);
+    if (!a || !a.data.unlocked_at) return "locked";
+    if (!a.data.started_at) return "lesson";
+    return stageGroup(a.data.srs_stage);
+  }
+  const EXTRA_FILTERS = {
+    none: "Nothing extra",
+    leeches: "Leeches",
+    "missed-last": "Missed last time",
+    "recent-lessons": "Learned in the last 7 days",
+    "due-today": "Due in the next 24 hours",
+    "recent-mistakes": "Missed in the last 24 hours on this device",
+  };
+  const INSPECT_SORTS = {
+    level: "Level",
+    stage: "SRS stage",
+    accuracy: "Worst accuracy first",
+    leech: "Worst leech first",
+    next: "Next review soonest",
+    learned: "Learned most recently",
+  };
+
+  // Every usable subject that passes the filters, as rows for a table:
+  // { subject, assignment, state, stage, accuracy, leech, next }.
+  // f: { from, to, types: { radical, kanji, vocabulary }, states: { locked, lesson, ... },
+  //      extra: a key of EXTRA_FILTERS, sort: a key of INSPECT_SORTS }
+  function inspect(m, f, now, history = []) {
+    const from = f.from || 1, to = f.to || 60;
+    const day = 24 * HOUR;
+    const missedHere = f.extra === "recent-mistakes" ? new Set(recentMistakes(m, history, now).map((e) => e.subject.id)) : null;
+    const out = [];
+    for (const s of m.subjects.values()) {
+      if (!usable(m, s) || s.data.level < from || s.data.level > to) continue;
+      const type = s.object === "kana_vocabulary" ? "vocabulary" : s.object;
+      if (f.types && f.types[type] === false) continue;
+      const state = stateOf(m, s);
+      if (f.states && f.states[state] === false) continue;
+      const a = m.bySubject.get(s.id) || null;
+      const st = m.stats.get(s.id);
+      const leech = leechScore(s, st);
+      const next = a && a.data.started_at && a.data.available_at && a.data.srs_stage < 9 ? Date.parse(a.data.available_at) : null;
+      const started = a && a.data.started_at ? Date.parse(a.data.started_at) : null;
+      if (f.extra === "leeches" && (leech < 1 || state === "burned")) continue;
+      if (f.extra === "missed-last") {
+        const d = st && st.data;
+        const missed = d && ((d.meaning_current_streak <= 1 && d.meaning_incorrect > 0) || (hasReading(s) && d.reading_current_streak <= 1 && d.reading_incorrect > 0));
+        if (!missed || state === "burned") continue;
+      }
+      if (f.extra === "recent-lessons" && !(started && started >= now - 7 * day)) continue;
+      if (f.extra === "due-today" && !(next && next <= now + day)) continue;
+      if (missedHere && !missedHere.has(s.id)) continue;
+      out.push({ subject: s, assignment: a, state, stage: a && a.data.started_at ? a.data.srs_stage : -1, accuracy: st ? st.data.percentage_correct : null, leech, next, started });
+    }
+    const lvl = (x, y) => x.subject.data.level - y.subject.data.level || TYPE_RANK[x.subject.object] - TYPE_RANK[y.subject.object] || (x.subject.data.lesson_position || 0) - (y.subject.data.lesson_position || 0);
+    const missingLast = (v) => (v == null ? Infinity : v);
+    const by = {
+      level: lvl,
+      stage: (x, y) => y.stage - x.stage || lvl(x, y),
+      accuracy: (x, y) => missingLast(x.accuracy) - missingLast(y.accuracy) || lvl(x, y),
+      leech: (x, y) => y.leech - x.leech || lvl(x, y),
+      next: (x, y) => missingLast(x.next) - missingLast(y.next) || lvl(x, y),
+      learned: (x, y) => (y.started || 0) - (x.started || 0) || lvl(x, y),
+    }[f.sort] || lvl;
+    return out.sort(by);
+  }
+
+  // ---------- heatmap and level times ----------
+  // Counts per local day: lessons from WaniKani (every device), reviews from this device's log.
+  // Returns Map(dayStart ms -> { lessons, reviews, missed }).
+  function activity(m, history, now, days = 371) {
+    const first = startOfDay(now - (days - 1) * 24 * HOUR);
+    const out = new Map();
+    const bump = (t, key) => {
+      if (!(t >= first) || t > now) return;
+      const d = startOfDay(t);
+      if (!out.has(d)) out.set(d, { lessons: 0, reviews: 0, missed: 0 });
+      out.get(d)[key]++;
+    };
+    for (const a of m.assignments.values()) if (a.data.started_at) bump(Date.parse(a.data.started_at), "lessons");
+    for (const h of history) {
+      if (h.mode !== "reviews") continue;
+      bump(h.at, "reviews");
+      if (h.wrongMeaning + h.wrongReading) bump(h.at, "missed");
+    }
+    return out;
+  }
+
+  // Days in a row with at least one of `key`, ending today (or yesterday, if today is still empty).
+  function streak(byDay, now, key) {
+    let d = startOfDay(now);
+    if (!(byDay.get(d) || {})[key]) d = startOfDay(d - 12 * HOUR);
+    let n = 0;
+    while ((byDay.get(d) || {})[key]) {
+      n++;
+      d = startOfDay(d - 12 * HOUR);
+    }
+    return n;
+  }
+
+  // Reviews arriving per day, from today. Today counts from now (what is due now is not included).
+  function forecastDays(m, now, days = 7) {
+    const out = [];
+    let start = startOfDay(now);
+    for (let i = 0; i < days; i++) {
+      const end = startOfDay(start + 36 * HOUR);
+      out.push({ at: start, end, count: 0 });
+      start = end;
+    }
+    for (const a of m.assignments.values()) {
+      const d = a.data;
+      if (d.hidden || !d.started_at || !d.available_at || d.srs_stage < 1 || d.srs_stage > 8) continue;
+      const t = Date.parse(d.available_at);
+      if (t <= now || !usable(m, m.subjects.get(d.subject_id))) continue;
+      const b = out.find((x) => t >= x.at && t < x.end);
+      if (b) b.count++;
+    }
+    return out;
+  }
+
+  // Time spent on each level, from /level_progressions: unlocked until passed (or until now
+  // for the level you are on). [{ level, start, end, ms, current }]
+  function levelTimes(m, now) {
+    const out = [];
+    for (const p of [...m.levels.values()].sort((a, b) => a.data.level - b.data.level)) {
+      const d = p.data;
+      if (d.abandoned_at || !d.unlocked_at) continue;
+      const start = Date.parse(d.unlocked_at);
+      const end = d.passed_at ? Date.parse(d.passed_at) : null;
+      out.push({ level: d.level, start, end, ms: (end || now) - start, current: !end });
+    }
+    return out;
+  }
+  function median(xs) {
+    if (!xs.length) return 0;
+    const a = xs.slice().sort((x, y) => x - y);
+    const mid = a.length >> 1;
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  }
+
   return {
     STAGE_NAMES, stageGroup, INTERVAL_HOURS, REVIEW_ORDERS, LESSON_ORDERS, HOUR,
     mulberry32, shuffle, apply, buildModel, usable, synonymsFor, entryOf,
     reviewsDue, lessonsAvailable, overdue, orderReviews, filterReviews, orderLessons,
     startOfDay, counts, lessonRoom, forecast, levelProgress, nextStage,
-    similarKanji, sharedRadicals, leeches, recentMistakes, search,
+    similarKanji, sharedRadicals, leechScore, leeches, recentMistakes, search,
+    confusions, soundFamily, STATES, stateOf, EXTRA_FILTERS, INSPECT_SORTS, inspect,
+    activity, streak, forecastDays, levelTimes, median,
   };
 });

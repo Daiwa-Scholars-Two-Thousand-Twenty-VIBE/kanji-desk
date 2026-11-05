@@ -82,8 +82,8 @@
     };
   }
 
-  // The four collections we keep, in sync order.
-  const COLLECTIONS = ["subjects", "assignments", "review_statistics", "study_materials"];
+  // The collections we keep, in sync order.
+  const COLLECTIONS = ["subjects", "assignments", "review_statistics", "study_materials", "level_progressions"];
 
   // Downloads what changed since the last sync. The store needs:
   //   getMeta(key), setMeta(key, value), putMany(storeName, items)

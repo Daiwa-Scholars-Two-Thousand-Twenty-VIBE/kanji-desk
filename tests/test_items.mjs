@@ -106,9 +106,9 @@ test("next SRS stage follows the WaniKani rule", () => {
 test("similar kanji and kanji that share radicals", () => {
   const m = model();
   assert.deepEqual(I.similarKanji(m, m.subjects.get(11)).map((s) => s.id), [10, 12]);
-  // 日 (sun radical) is shared with 目; 一 (ground) is shared with 本.
+  // 日 (sun radical) is shared with 日 and 晴; 一 (ground) is shared with 本.
   const shared = I.sharedRadicals(m, m.subjects.get(12));
-  assert.deepEqual(shared.map((h) => h.subject.id).sort(), [11, 14]);
+  assert.deepEqual(shared.map((h) => h.subject.id).sort(), [11, 14, 17]);
   assert.deepEqual(shared.find((h) => h.subject.id === 11).shared.map((r) => r.id), [3]);
   // 本 shares a radical with 木 (tree) and with 目 (ground).
   assert.deepEqual(I.sharedRadicals(m, m.subjects.get(14)).map((h) => h.subject.id).sort(), [12, 15]);

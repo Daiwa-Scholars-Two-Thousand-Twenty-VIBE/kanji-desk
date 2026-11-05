@@ -30,20 +30,29 @@ There is also a demo with made-up items (the **Try the demo first** button). It 
 | **Lightning mode**: moves on by itself after a right answer | Flaming Durtles |
 | **Looks similar**: WaniKani's visually similar kanji | similar-kanji scripts |
 | **Shares radicals**: other kanji built from the same radicals, most shared first, with the shared radicals named | radical-relation scripts |
+| **You may be thinking of**: after a wrong answer, the items your answer fits (look-alikes first), so you see what you mixed it up with | ConfusionGuesser |
+| **Sound part**: a kanji's phonetic component, its readings, whether the kanji follows it, and the other kanji built on it. Shown once the reading is answered | Keisei Phonetic-Semantic Composition |
+| **Pitch accent** for vocabulary: a line over the high morae, the drop number and its name | Pitch Info |
 | Item info: meanings, readings (on'yomi, kun'yomi, nanori), mnemonics, hints, your notes, context sentences, audio, the radicals or kanji inside, the kanji or words it is used in, your streaks. Every related item opens in a sheet | the site |
 | New SRS stage shown as each item finishes | the site |
 | **Lesson caps**: an Apprentice cap and a lessons-per-day cap (counts lessons started on any device). Lesson order: WaniKani's, kanji first, or shuffled. Batch size 3 to 10 | Flaming Durtles |
+| **Pick lessons**: choose exactly which waiting lessons to learn, one by one, by level or by type. Picked items are taught first | Better Lesson Picker |
+| **Items**: every item in a table, filtered by level range, type and SRS stage, and by leeches, missed last time, learned in the last 7 days, due in the next 24 hours, or missed in the last 24 hours here. Sort by level, stage, accuracy, leech score, next review or most recently learned | Item Inspector, Open Framework Additional Filters |
+| **Self-study quiz** (nothing sent) on any filtered set: meaning and reading, or one half only. Item info stays hidden until you answer | Self-Study Quiz, Self-Study Hide Info |
 | **Extra practice** (nothing sent): recent mistakes on this device, and leeches from your WaniKani stats | Leech Trainer, extra study |
+| **Stats**: a year heatmap of reviews done here or lessons on any device, with streak and busiest day. Time on each level and your median, and time so far on the level you are on. Reviews per day for the week ahead | Heatmap, Level Duration 2 |
 | Next 24 hours forecast, level progress, SRS counts, search by kanji, kana, romaji or English | the dashboard |
 | **Offline**: answers made offline are kept and sent, with the time you really answered, when you are back online. Installable on a phone or desktop | Flaming Durtles |
 | Light and dark themes | |
+
+The heatmap's review count only knows reviews done in Kanji Desk in that browser. WaniKani no longer lets apps download past reviews, so reviews done on the site, on your phone or in another browser do not show. Lessons are complete, since they come from your assignments.
 
 Keys in a session: **Enter** answers and moves on · **Backspace** retypes · **+** / **−** marks right or wrong · **F** item info · **J** audio. In lessons: **← →** move · **Enter** next · **J** audio · **Q** quiz.
 
 ## How it talks to WaniKani
 
 - The WaniKani API v2 answers browsers on any site (`Access-Control-Allow-Origin: *`), so the page calls `https://api.wanikani.com/v2` straight from your browser with `Authorization: Bearer <token>`.
-- It downloads subjects, assignments, review statistics and study materials once, keeps them in IndexedDB, and later asks only for what changed (`updated_after`).
+- It downloads subjects, assignments, review statistics, study materials and level progressions once, keeps them in IndexedDB, and later asks only for what changed (`updated_after`).
 - A finished review is `POST /v2/reviews` with the miss counts for meaning and reading. A finished lesson quiz is `PUT /v2/assignments/<id>/start`. Both go through an outbox, sent in order. If WaniKani refuses one (for example, the item was already reviewed on another device), it is dropped and shown on the home screen.
 - Before a session it syncs if the last sync was more than a minute ago, so items you did on your phone do not come back.
 
@@ -62,6 +71,12 @@ GitHub Pages is the main home, but some networks (a work laptop, for one) block 
 
 No relay is needed: the page only talks to `api.wanikani.com` and `files.wanikani.com`, never to GitHub. Browser storage is per web address, so the Vercel copy starts empty: paste your token there once.
 
+## Pitch accent and sound part data
+
+`data/pitch.tsv` and `data/keisei.json` come from the [Kanjium](https://github.com/mifunetoshiro/kanjium) database by Uros O., under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The pitch accent notation and phonetic components are his additions to EDICT and KANJIDIC. Both files keep that licence; see [data/LICENSE.md](data/LICENSE.md). `python3 -I tools/build_data.py` rebuilds them from a pinned Kanjium commit.
+
+The pitch list (3 MB, under 1 MB compressed) is only fetched the first time you open a word, then served from the browser cache.
+
 ## Running it yourself
 
 There is no build step. Serve the folder (IndexedDB and offline mode need `http://localhost` or https, not `file://`):
@@ -71,7 +86,7 @@ python3 -m http.server 8791
 ```
 
 ```bash
-node --test tests/*.mjs     # answer checking, sessions, queues and the API client
+node --test tests/*.mjs     # answer checking, sessions, queues, the API client and the extras
 ```
 
 Use the `tests/*.mjs` glob. On Node 26, `node --test tests/` runs 0 tests and still exits 0, so it looks like a pass.

@@ -2,13 +2,13 @@
 // Both have the same methods:
 //   getAll(store), putMany(store, items), add(store, item) -> key, remove(store, key),
 //   getMeta(key), setMeta(key, value), wipe()
-// Stores: subjects, assignments, review_statistics, study_materials (keyed by id),
+// Stores: subjects, assignments, review_statistics, study_materials, level_progressions (keyed by id),
 // outbox (queued answers), history (finished items, this device only), meta (sync cursors, user).
 (function (root) {
   "use strict";
-  const DATA = ["subjects", "assignments", "review_statistics", "study_materials"];
+  const DATA = ["subjects", "assignments", "review_statistics", "study_materials", "level_progressions"];
   const LOGS = ["outbox", "history"];
-  const VERSION = 1;
+  const VERSION = 2; // 2 added level_progressions
 
   const req = (r) => new Promise((resolve, reject) => {
     r.onsuccess = () => resolve(r.result);
@@ -29,6 +29,8 @@
       if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" });
     };
     const db = await req(r);
+    // A newer version of the app in another tab needs the database to upgrade: let it.
+    db.onversionchange = () => db.close();
     const os = (store, mode) => db.transaction(store, mode).objectStore(store);
     return {
       getAll: (store) => req(os(store, "readonly").getAll()),

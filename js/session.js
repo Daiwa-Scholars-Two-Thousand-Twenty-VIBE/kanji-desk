@@ -17,7 +17,8 @@
   else root.Session = api;
 })(typeof self !== "undefined" ? self : this, function (C) {
   // entries: [{ key, subject, synonyms, assignment? }]
-  // opts: { activeSize, strict, questionOrder: "random" | "meaning" | "reading", backToBack, rng }
+  // opts: { activeSize, strict, questionOrder: "random" | "meaning" | "reading", backToBack, rng,
+  //         kinds: ["meaning"] or ["reading"] to ask only that half (self-study) }
   function create(entries, opts = {}) {
     const o = Object.assign({ activeSize: 10, strict: false, questionOrder: "random", backToBack: false, rng: Math.random }, opts);
     const pool = entries.slice();
@@ -32,7 +33,12 @@
     let asked = 0;
     let rightFirstGo = 0;
 
-    const makeItem = (entry) => ({ entry, todo: new Set(C.questionsFor(entry.subject)), wrong: { meaning: 0, reading: 0 } });
+    // An item with none of the asked-for halves (a radical in a reading-only quiz) keeps its own.
+    function makeItem(entry) {
+      const all = C.questionsFor(entry.subject);
+      const some = o.kinds ? all.filter((k) => o.kinds.includes(k)) : all;
+      return { entry, todo: new Set(some.length ? some : all), wrong: { meaning: 0, reading: 0 } };
+    }
 
     function refill() {
       while (!wrapping && active.length < o.activeSize && pool.length) active.push(makeItem(pool.shift()));

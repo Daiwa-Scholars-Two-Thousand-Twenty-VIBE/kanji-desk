@@ -1,8 +1,9 @@
 // Offline support. The app's own files: network first, so a new version shows up straight
-// away, with the cache as the fallback offline. Audio and radical images from WaniKani's file
-// server: cache first, they never change. The API is never touched here; the app keeps its
-// own copy of your data in IndexedDB.
-const SHELL = "kanji-desk-shell-v1";
+// away, with the cache as the fallback offline. The pitch accent list (3 MB) is not in the
+// install list; it is cached like any other file the first time an item needs it. Audio and
+// radical images from WaniKani's file server: cache first, they never change. The API is never
+// touched here; the app keeps its own copy of your data in IndexedDB.
+const SHELL = "kanji-desk-shell-v2";
 const MEDIA = "kanji-desk-media-v1";
 const FILES = [
   "./",
@@ -11,11 +12,13 @@ const FILES = [
   "vendor/wanakana.min.js",
   "js/check.js",
   "js/items.js",
+  "js/pitch.js",
   "js/session.js",
   "js/wk.js",
   "js/store.js",
   "js/demo.js",
   "js/app.js",
+  "data/keisei.json",
   "manifest.webmanifest",
   "favicon.svg",
   "icon-192.png",
