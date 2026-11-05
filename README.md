@@ -23,7 +23,7 @@ There is also a demo with made-up items (the **Try the demo first** button). It 
 | Feature | Like |
 |---|---|
 | Reviews and lessons, with WaniKani's answer rules: your synonyms, accepted and blocked meanings, small typos forgiven on longer words, a shake (not a miss) for a kanji's other reading or for Japanese typed into the meaning box | the site |
-| **Retype, mark right, mark wrong** before moving on. An item is only sent once both halves are final | Double-Check |
+| **Retype, mark right, mark wrong** before moving on. An item is only sent once both halves are final. After a wrong answer Next waits 1.5 seconds (Settings can change it), so a quick second Enter cannot skip a typo that Backspace would undo | Double-Check |
 | **Review order and filters**: shuffled, lower or higher levels first, current level first, lowest or highest SRS stage first, radicals then kanji then vocabulary, most overdue first, waiting longest first. Include or leave out radicals, kanji, vocabulary. Cap the session at 10, 20, 30, 50 or 100 | Reorder Omega |
 | Meaning first, reading first or random. **Both halves back to back.** Items in play at once (1 to 20) | Reorder Omega |
 | **Wrap up**: finish the items in play and stop | the site |

@@ -1,5 +1,6 @@
 /* Kanji Desk. Light and dark follow the system unless Settings picks one.
-   Item types: radical green, kanji vermilion, vocabulary blue, each always shown with its name too. */
+   Item types in WaniKani's colours: radical blue, kanji pink, vocabulary purple, each always shown with
+   its name too. */
 :root {
   --bg: #f4f2ec;
   --panel: #ffffff;
@@ -14,9 +15,13 @@
   --bad: #b8322a;
   --bad-bg: #fbe4e1;
   --warn-bg: #fff3c9;
-  --rad: #2b8a3e;
-  --kan: #d9480f;
-  --voc: #1971c2;
+  /* WaniKani's own item colours, and the darker end of its gradients. */
+  --rad: #00aaff;
+  --kan: #ff00aa;
+  --voc: #aa00ff;
+  --rad-bg: linear-gradient(to bottom, #00aaff, #0093dd);
+  --kan-bg: linear-gradient(to bottom, #ff00aa, #dd0093);
+  --voc-bg: linear-gradient(to bottom, #aa00ff, #9300dd);
   --reading-bg: #26252a;
   --reading-fg: #f4f2ec;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.04);
@@ -41,9 +46,6 @@
     --bad: #ff8a80;
     --bad-bg: #3a1d1b;
     --warn-bg: #3a3218;
-    --rad: #2f9e44;
-    --kan: #e8590c;
-    --voc: #1c7ed6;
     --reading-bg: #ecebe6;
     --reading-fg: #131417;
     --shadow: none;
@@ -64,9 +66,6 @@
   --bad: #ff8a80;
   --bad-bg: #3a1d1b;
   --warn-bg: #3a3218;
-  --rad: #2f9e44;
-  --kan: #e8590c;
-  --voc: #1c7ed6;
   --reading-bg: #ecebe6;
   --reading-fg: #131417;
   --shadow: none;
@@ -123,6 +122,22 @@ kbd {
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.bad { color: var(--bad); }
+/* Next waits a moment after a wrong answer; the bar along its foot fills while it does. */
+.btn { transition: opacity 150ms var(--ease-out); }
+.btn.held { position: relative; overflow: hidden; opacity: 0.55; cursor: default; }
+.btn.held::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: hold var(--hold) linear var(--hold-at) forwards;
+}
+@keyframes hold { to { transform: scaleX(1); } }
 .btn.small { font-size: 0.85rem; padding: 0.35em 0.7em; min-height: 34px; }
 .btn.wide { width: 100%; }
 .btn.on { background: var(--warn-bg); }
@@ -251,9 +266,9 @@ input[type="number"] { width: 6em; }
   background: var(--muted);
 }
 .qcard.small { min-height: 0; padding: 22px 12px 10px; }
-.qcard.t-rad { background: var(--rad); }
-.qcard.t-kan { background: var(--kan); }
-.qcard.t-voc { background: var(--voc); }
+.qcard.t-rad { background: var(--rad-bg); }
+.qcard.t-kan { background: var(--kan-bg); }
+.qcard.t-voc { background: var(--voc-bg); }
 .qchars { font-family: var(--jp); font-size: clamp(64px, 20vw, 128px); line-height: 1.15; text-align: center; word-break: keep-all; }
 .qchars[data-len="3"] { font-size: clamp(54px, 16vw, 112px); }
 .qchars[data-len="4"] { font-size: clamp(46px, 13vw, 96px); }
@@ -326,9 +341,9 @@ input[type="number"] { width: 6em; }
   white-space: nowrap;
 }
 .ltab.on { opacity: 1; border-color: var(--fg); }
-.ltab.t-rad { background: var(--rad); }
-.ltab.t-kan { background: var(--kan); }
-.ltab.t-voc { background: var(--voc); }
+.ltab.t-rad { background: var(--rad-bg); }
+.ltab.t-kan { background: var(--kan-bg); }
+.ltab.t-voc { background: var(--voc-bg); }
 .ltab .rad-img { width: 1em; height: 1em; filter: invert(1); vertical-align: middle; }
 .lnav { justify-content: space-between; }
 
@@ -346,9 +361,10 @@ input[type="number"] { width: 6em; }
 .hint b, .note b { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .mk { font-weight: 600; border-radius: 3px; }
 .mk-reading, .mk-meaning { padding: 0 0.15em; }
-.mk-radical { color: var(--rad); }
-.mk-kanji { color: var(--kan); }
-.mk-vocabulary { color: var(--voc); }
+.mk-radical, .mk-kanji, .mk-vocabulary { padding: 0 0.2em; color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25); }
+.mk-radical { background: var(--rad); }
+.mk-kanji { background: var(--kan); }
+.mk-vocabulary { background: var(--voc); }
 .mk-reading { background: var(--reading-bg); color: var(--reading-fg); }
 .mk-meaning { background: var(--panel-2); }
 .mk-ja { font-family: var(--jp); }
@@ -516,9 +532,9 @@ input[type="number"] { width: 6em; }
 .ptile small { font: 0.7rem var(--ui); max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ptile.on { opacity: 1; border-color: var(--fg); }
 .ptile.on::before { content: "✓"; position: absolute; top: 0; right: 5px; font: 700 0.7rem var(--ui); }
-.ptile.t-rad { background: var(--rad); }
-.ptile.t-kan { background: var(--kan); }
-.ptile.t-voc { background: var(--voc); }
+.ptile.t-rad { background: var(--rad-bg); }
+.ptile.t-kan { background: var(--kan-bg); }
+.ptile.t-voc { background: var(--voc-bg); }
 .ptile .rad-img { width: 1em; height: 1em; filter: invert(1); }
 @media (max-width: 520px) {
   .hometop { flex-direction: column; gap: 6px; }

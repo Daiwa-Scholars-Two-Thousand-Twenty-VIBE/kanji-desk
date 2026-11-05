@@ -19,6 +19,7 @@
     activeSize: 10,
     lightning: false,
     infoOnWrong: true,
+    wrongPause: 1500, // ms Next waits after a wrong answer, so Backspace can undo a typo
     srsIndicator: true,
     autoplay: true,
     voice: "female",
@@ -92,6 +93,9 @@
   let infoOpen = false;
   let infoAll = false; // also show the half still to be answered
   let lightningTimer = null;
+  let holdTimer = null; // set while Next waits after a wrong answer
+  let holdMs = 0;
+  let holdEnd = 0;
   let toastTimer = null;
   const modalStack = [];
 
@@ -642,6 +646,7 @@
     input.placeholder = cur.kind === "reading" ? "答え" : "Your answer";
     input.value = keepText ? old : "";
     $("#qnote").textContent = "";
+    clearHold();
     hideConfusions();
     $("#qacts").innerHTML = "";
     $("#qinfo").innerHTML = "";
@@ -671,7 +676,7 @@
       ${a.right ? `<button class="btn small" data-act="markwrong">Mark wrong <kbd>−</kbd></button>` : `<button class="btn small" data-act="markright">Mark right <kbd>+</kbd></button>`}
       <button class="btn small" data-act="info">${infoLabel} <kbd>F</kbd></button>
       ${hasAudio ? `<button class="btn small" data-act="audio">Audio <kbd>J</kbd></button>` : ""}
-      <button class="btn small primary" data-act="next">Next <kbd>↵</kbd></button>`;
+      ${nextButton()}`;
     paintInfo();
     input.focus({ preventScroll: true });
   }
@@ -743,6 +748,28 @@
     $("#qnote").textContent = message || "";
   }
 
+  // After a wrong answer Next waits a moment, so a quick second Enter cannot skip past a
+  // typo that Backspace would undo (like Double-Check's delay). A bar on Next fills meanwhile.
+  function hold(ms) {
+    clearHold();
+    holdMs = ms;
+    holdEnd = Date.now() + ms;
+    holdTimer = setTimeout(() => {
+      clearHold();
+      const b = $('#qacts [data-act="next"]');
+      if (b) b.outerHTML = nextButton();
+    }, ms);
+  }
+  function clearHold() {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+  function nextButton() {
+    if (!holdTimer) return `<button class="btn small primary" data-act="next">Next <kbd>↵</kbd></button>`;
+    const at = holdMs - Math.max(0, holdEnd - Date.now()); // repaints carry on from here
+    return `<button class="btn small primary held" data-act="next" aria-disabled="true" style="--hold:${holdMs}ms;--hold-at:-${at}ms">Next <kbd>↵</kbd></button>`;
+  }
+
   function submitAnswer() {
     if (!sess) return;
     if (sess.s.answer()) return next();
@@ -753,12 +780,14 @@
     const a = sess.s.answer();
     const s = cur.item.entry.subject;
     if (!a.right && settings.infoOnWrong) infoOpen = true;
+    if (!a.right && settings.wrongPause > 0) hold(settings.wrongPause);
     paintAnswer();
     if (cur.kind === "reading" && (sess.kind === "lesson" ? settings.lessonAutoplay : settings.autoplay)) play(s, a.right ? C.normalizeReading(a.text) : null);
     if (a.right && a.result === "exact" && settings.lightning) lightningTimer = setTimeout(next, 350);
   }
 
   function next() {
+    if (holdTimer) return;
     clearTimeout(lightningTimer);
     lightningTimer = null;
     if (!sess || !sess.s.answer()) return;
@@ -774,6 +803,7 @@
   function retype() {
     clearTimeout(lightningTimer);
     lightningTimer = null;
+    clearHold();
     sess.s.retype();
     paintQuestion(true);
   }
@@ -781,6 +811,7 @@
   function mark(right) {
     clearTimeout(lightningTimer);
     lightningTimer = null;
+    if (right) clearHold();
     sess.s.mark(right);
     paintAnswer();
   }
@@ -1332,6 +1363,7 @@
         <label class="field">Items in play at once ${sel("activeSize", [[1, "1"], [3, "3"], [5, "5"], [10, "10 (like the site)"], [20, "20"]], true)}</label>
         ${chk("lightning", "Lightning mode", "Move on by itself after a right answer. Backspace within a moment still retypes.")}
         ${chk("infoOnWrong", "Show item info after a wrong answer")}
+        <label class="field">Pause after a wrong answer ${sel("wrongPause", [[0, "None"], [1000, "1 second"], [1500, "1.5 seconds"], [2000, "2 seconds"], [3000, "3 seconds"]], true)}<span class="muted small">Enter waits this long before moving on, so Backspace can undo a typo.</span></label>
         ${chk("srsIndicator", "Show the new SRS stage when an item is done")}
         ${chk("autoplay", "Play the audio after a reading answer")}
         <label class="field">Voice ${sel("voice", [["female", "Female"], ["male", "Male"]])}</label>
@@ -1609,8 +1641,9 @@
     const quizOn = sess && (screen === "quiz" || (screen === "lessons" && lesson && lesson.phase === "quiz"));
     if (quizOn && sess.s.answer()) {
       const k = e.key;
-      if (k === "Enter") next();
-      else if (k === "Backspace" || k === "Escape" || k === "Delete") retype();
+      if (k === "Enter") {
+        if (!e.repeat) next(); // a held-down Enter does not race through answers
+      } else if (k === "Backspace" || k === "Escape" || k === "Delete") retype();
       else if (k === "+" || k === "=") mark(true);
       else if (k === "-" || k === "_") mark(false);
       else if (k === "f" || k === "F") cycleInfo();

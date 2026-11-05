@@ -3,7 +3,7 @@
 // install list; it is cached like any other file the first time an item needs it. Audio and
 // radical images from WaniKani's file server: cache first, they never change. The API is never
 // touched here; the app keeps its own copy of your data in IndexedDB.
-const SHELL = "kanji-desk-shell-v3";
+const SHELL = "kanji-desk-shell-v4";
 const MEDIA = "kanji-desk-media-v1";
 const FILES = [
   "./",
