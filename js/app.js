@@ -90,6 +90,7 @@
   const pickSel = new Set(); // the picker's current selection
   let last = null; // the finished session, for the summary screen
   let infoOpen = false;
+  let infoAll = false; // also show the half still to be answered
   let lightningTimer = null;
   let toastTimer = null;
   const modalStack = [];
@@ -524,6 +525,7 @@
       }, extra)),
     };
     infoOpen = false;
+    infoAll = false;
   }
 
   async function startReviews() {
@@ -573,17 +575,17 @@
         ${sess.kind === "lesson" ? "" : `<button class="btn small" id="wrapbtn" data-act="wrap">Wrap up</button>`}
       </header>
       ${sess.kind !== "practice" && !sending() ? `<p class="testflag">${demo ? "Demo" : "Test mode"}: nothing is sent</p>` : ""}
-      <section class="qcard" id="qcard"><div class="qchars" id="qchars" lang="ja"></div><div class="toast" id="toast" aria-live="polite"></div></section>
+      <section class="qcard" id="qcard"><div class="qchars" id="qchars" lang="ja"></div><div class="toast" id="toast" aria-live="polite"></div>
+        <div class="qconf" id="qconf" aria-live="polite"></div></section>
       <div class="qprompt" id="qprompt"></div>
       <form id="qform" class="qform" autocomplete="off">
         <input id="qin" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go" aria-label="Your answer">
         <button class="qgo" aria-label="Submit">↵</button>
       </form>
       <div class="qnote" id="qnote" aria-live="polite"></div>
-      <div class="qconf" id="qconf"></div>
       <div class="qacts" id="qacts"></div>
       <div class="qinfo" id="qinfo"></div>
-      <p class="keys muted small">Keys: Enter answers and moves on · Backspace retypes · + or − marks right or wrong · F item info · J audio</p>
+      <p class="keys muted small">Keys: Enter answers and moves on · Backspace retypes · + or − marks right or wrong · F item info (again: everything) · E everything · J audio</p>
     </div>`;
   }
 
@@ -640,10 +642,11 @@
     input.placeholder = cur.kind === "reading" ? "答え" : "Your answer";
     input.value = keepText ? old : "";
     $("#qnote").textContent = "";
-    $("#qconf").innerHTML = "";
+    hideConfusions();
     $("#qacts").innerHTML = "";
     $("#qinfo").innerHTML = "";
     infoOpen = false;
+    infoAll = false;
     paintProgress();
     input.focus();
     if (keepText) input.select();
@@ -661,26 +664,40 @@
     if (a.changed) note = a.right ? "Marked right." : "Marked wrong.";
     $("#qnote").textContent = note;
     paintConfusions(cur, a);
-    const readingShown = cur.kind === "reading" || !s.data.readings || !sess.s.otherTodo().includes("reading");
-    const hasAudio = readingShown && audioFor(s).length;
+    const hasAudio = readingShown() && audioFor(s).length;
+    const infoLabel = !infoOpen ? "Item info" : sess.s.otherTodo().length && !infoAll ? "Show everything" : "Hide info";
     $("#qacts").innerHTML = `
       <button class="btn small" data-act="retype">Retype <kbd>⌫</kbd></button>
       ${a.right ? `<button class="btn small" data-act="markwrong">Mark wrong <kbd>−</kbd></button>` : `<button class="btn small" data-act="markright">Mark right <kbd>+</kbd></button>`}
-      <button class="btn small" data-act="info">${infoOpen ? "Hide info" : "Item info"} <kbd>F</kbd></button>
+      <button class="btn small" data-act="info">${infoLabel} <kbd>F</kbd></button>
       ${hasAudio ? `<button class="btn small" data-act="audio">Audio <kbd>J</kbd></button>` : ""}
       <button class="btn small primary" data-act="next">Next <kbd>↵</kbd></button>`;
     paintInfo();
     input.focus({ preventScroll: true });
   }
 
-  // After a wrong answer: other items whose answer is what you typed (like ConfusionGuesser).
+  // After a wrong answer: other items whose answer is what you typed (like ConfusionGuesser),
+  // on a card that slides in at the top right of the question.
   function paintConfusions(cur, a) {
     const el = $("#qconf");
     if (!el) return;
     const s = cur.item.entry.subject;
     const typed = a.right ? "" : cur.kind === "reading" ? C.normalizeReading(a.text) : C.normalizeMeaning(a.text);
     const list = typed ? I.confusions(model, s, cur.kind, typed, C.normalizeMeaning) : [];
-    el.innerHTML = list.length ? `<p class="muted small">You may be thinking of:</p>${chips(list)}` : "";
+    if (!list.length) return hideConfusions();
+    const key = `${s.id}:${list.map((x) => x.id).join(",")}`;
+    if (el.classList.contains("show") && el.dataset.key === key) return; // already showing (info toggled, say)
+    el.dataset.key = key;
+    el.innerHTML = `<div class="qconf-head"><span>You may be thinking of</span><button class="qconf-x" data-act="confclose" aria-label="Close">✕</button></div>${chips(list)}`;
+    void el.offsetWidth; // start from the hidden state so the slide runs
+    el.classList.add("show");
+    const t = $("#toast");
+    if (t) t.classList.remove("show"); // the previous item's stage would sit under the card
+  }
+  // Slides back out the way it came; the content stays until it has gone.
+  function hideConfusions() {
+    const el = $("#qconf");
+    if (el) el.classList.remove("show");
   }
 
   function paintInfo() {
@@ -691,8 +708,31 @@
       el.innerHTML = "";
       return;
     }
-    const todo = sess.s.otherTodo();
-    el.innerHTML = infoHTML(cur.item.entry.subject, { hide: { meaning: todo.includes("meaning"), reading: todo.includes("reading") } });
+    const todo = infoAll ? [] : sess.s.otherTodo();
+    const note = todo.length
+      ? `<p class="muted small hidden-note">The ${todo[0]} is hidden until you answer it. <button class="link" data-act="infoall">Show everything</button> <kbd>E</kbd></p>`
+      : "";
+    el.innerHTML = note + infoHTML(cur.item.entry.subject, { hide: { meaning: todo.includes("meaning"), reading: todo.includes("reading") } });
+  }
+
+  // Whether the reading may be shown (and its audio played) yet.
+  function readingShown() {
+    const cur = sess.s.current();
+    const s = cur.item.entry.subject;
+    return infoAll || cur.kind === "reading" || !s.data.readings || !sess.s.otherTodo().includes("reading");
+  }
+
+  // F: info for what has been asked. F again: everything, the half still to answer too
+  // (when there is one). F once more: closed. E goes straight to everything, or closes it.
+  function cycleInfo() {
+    if (!infoOpen) infoOpen = true;
+    else if (!infoAll && sess.s.otherTodo().length) infoAll = true;
+    else infoOpen = infoAll = false;
+    paintAnswer();
+  }
+  function toggleAll() {
+    infoOpen = infoAll = !(infoOpen && infoAll);
+    paintAnswer();
   }
 
   function shake(message) {
@@ -1454,8 +1494,13 @@
         mark(false);
         break;
       case "info":
-        infoOpen = !infoOpen;
-        paintAnswer();
+        cycleInfo();
+        break;
+      case "infoall":
+        toggleAll();
+        break;
+      case "confclose":
+        hideConfusions();
         break;
       case "audio":
         if (sess && sess.s.current()) play(sess.s.current().item.entry.subject);
@@ -1568,10 +1613,11 @@
       else if (k === "Backspace" || k === "Escape" || k === "Delete") retype();
       else if (k === "+" || k === "=") mark(true);
       else if (k === "-" || k === "_") mark(false);
-      else if (k === "f" || k === "F") {
-        infoOpen = !infoOpen;
-        paintAnswer();
-      } else if (k === "j" || k === "J") play(sess.s.current().item.entry.subject);
+      else if (k === "f" || k === "F") cycleInfo();
+      else if (k === "e" || k === "E") toggleAll();
+      else if (k === "j" || k === "J") {
+        if (readingShown()) play(sess.s.current().item.entry.subject);
+      }
       else return;
       e.preventDefault();
       return;

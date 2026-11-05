@@ -47,7 +47,7 @@ There is also a demo with made-up items (the **Try the demo first** button). It 
 
 The heatmap's review count only knows reviews done in Kanji Desk in that browser. WaniKani no longer lets apps download past reviews, so reviews done on the site, on your phone or in another browser do not show. Lessons are complete, since they come from your assignments.
 
-Keys in a session: **Enter** answers and moves on · **Backspace** retypes · **+** / **−** marks right or wrong · **F** item info · **J** audio. In lessons: **← →** move · **Enter** next · **J** audio · **Q** quiz.
+Keys in a session: **Enter** answers and moves on · **Backspace** retypes · **+** / **−** marks right or wrong · **F** item info for what has been asked, **F** again for everything (the half still to answer too), **F** once more to close · **E** everything straight away · **J** audio. In lessons: **← →** move · **Enter** next · **J** audio · **Q** quiz.
 
 ## How it talks to WaniKani
 
