@@ -3,7 +3,7 @@
 // install list; it is cached like any other file the first time an item needs it. Audio and
 // radical images from WaniKani's file server: cache first, they never change. The API is never
 // touched here; the app keeps its own copy of your data in IndexedDB.
-const SHELL = "kanji-desk-shell-v4";
+const SHELL = "kanji-desk-shell-v5";
 const MEDIA = "kanji-desk-media-v1";
 const FILES = [
   "./",
@@ -32,7 +32,8 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== SHELL && k !== MEDIA).map((k) => caches.delete(k))))
+      // Only this app's old caches: other apps on the same github.io address (the N2 drill) keep theirs.
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("kanji-desk-") && k !== SHELL && k !== MEDIA).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });

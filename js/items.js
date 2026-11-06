@@ -188,19 +188,33 @@
     return Math.max(0, room);
   }
 
+  // A forecast bucket counts its reviews in all, by item type and by SRS stage group.
+  const FORECAST_TYPE = { radical: "radical", kanji: "kanji", vocabulary: "vocabulary", kana_vocabulary: "vocabulary" };
+  const bucket = (at, end) => ({
+    at, end, count: 0,
+    type: { radical: 0, kanji: 0, vocabulary: 0 },
+    stage: { apprentice: 0, guru: 0, master: 0, enlightened: 0 },
+  });
+  function tally(b, s, stage) {
+    b.count++;
+    b.type[FORECAST_TYPE[s.object]]++;
+    b.stage[stageGroup(stage)]++;
+  }
+
   // Reviews coming up, one bucket per clock hour. The first bucket runs from now to the next full hour.
   function forecast(m, now, hours = 24, skip = new Set()) {
     const first = new Date(now);
     first.setMinutes(0, 0, 0);
-    const buckets = Array.from({ length: hours }, (_, i) => ({ at: first.getTime() + (i + 1) * HOUR, count: 0 }));
+    const buckets = Array.from({ length: hours }, (_, i) => bucket(first.getTime() + (i + 1) * HOUR));
     const end = buckets[buckets.length - 1].at;
     for (const a of m.assignments.values()) {
       const d = a.data;
       if (d.hidden || !d.started_at || !d.available_at || d.srs_stage < 1 || d.srs_stage > 8 || skip.has(a.id)) continue;
       const t = Date.parse(d.available_at);
-      if (t <= now || t > end || !usable(m, m.subjects.get(d.subject_id))) continue;
+      const s = m.subjects.get(d.subject_id);
+      if (t <= now || t > end || !usable(m, s)) continue;
       const i = Math.max(0, Math.ceil((t - first.getTime()) / HOUR) - 1);
-      buckets[i].count++;
+      tally(buckets[i], s, d.srs_stage);
     }
     return buckets;
   }
@@ -505,16 +519,17 @@
     let start = startOfDay(now);
     for (let i = 0; i < days; i++) {
       const end = startOfDay(start + 36 * HOUR);
-      out.push({ at: start, end, count: 0 });
+      out.push(bucket(start, end));
       start = end;
     }
     for (const a of m.assignments.values()) {
       const d = a.data;
       if (d.hidden || !d.started_at || !d.available_at || d.srs_stage < 1 || d.srs_stage > 8) continue;
       const t = Date.parse(d.available_at);
-      if (t <= now || !usable(m, m.subjects.get(d.subject_id))) continue;
+      const s = m.subjects.get(d.subject_id);
+      if (t <= now || !usable(m, s)) continue;
       const b = out.find((x) => t >= x.at && t < x.end);
-      if (b) b.count++;
+      if (b) tally(b, s, d.srs_stage);
     }
     return out;
   }

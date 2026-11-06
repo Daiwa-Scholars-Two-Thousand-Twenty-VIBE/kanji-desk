@@ -32,6 +32,7 @@
     selfStudyKinds: "both",
     selfStudyLimit: 20,
     heatmap: "reviews",
+    forecastSplit: "total", // the forecast bars: "total", or stacked by "type" or SRS "stage"
     inspect: {
       from: 1,
       to: 60,
@@ -409,27 +410,49 @@
     else paintStatus();
   }
 
+  // The forecasts can stack each bar by item type or by SRS stage group, bottom to top (left to
+  // right in the week ahead) in this order, in WaniKani's colours for each.
+  const SPLITS = {
+    type: [["radical", "Radicals"], ["kanji", "Kanji"], ["vocabulary", "Vocabulary"]],
+    stage: [["apprentice", "Apprentice"], ["guru", "Guru"], ["master", "Master"], ["enlightened", "Enlightened"]],
+  };
+  const splitOf = () => (SPLITS[settings.forecastSplit] ? settings.forecastSplit : null);
+  const stackHTML = (b, split) => SPLITS[split].filter(([k]) => b[split][k]).map(([k]) => `<i class="fc-seg c-${k}" style="flex-grow:${b[split][k]}"></i>`).join("");
+  const splitText = (b, split) => SPLITS[split].filter(([k]) => b[split][k]).map(([k, name]) => `${b[split][k]} ${name.toLowerCase()}`).join(", ");
+  function splitToggle() {
+    const on = splitOf() || "total";
+    const opt = (v, label) => `<label class="seg-opt"><input type="radio" name="fcsplit" value="${v}" data-set="forecastSplit" ${on === v ? "checked" : ""}><span>${label}</span></label>`;
+    return `<div class="segs" role="radiogroup" aria-label="Split the bars by">${opt("total", "Total")}${opt("type", "Type")}${opt("stage", "SRS stage")}</div>`;
+  }
+  function splitLegend(buckets, split) {
+    return `<p class="fc-legend">${SPLITS[split].map(([k, name]) => `<span><i class="sw c-${k}"></i>${name} <b>${n(buckets.reduce((a, b) => a + b[split][k], 0))}</b></span>`).join("")}</p>`;
+  }
+
   function forecastHTML(buckets, dueNow) {
+    const split = splitOf();
     const max = Math.max(1, ...buckets.map((b) => b.count));
     const peak = buckets.findIndex((b) => b.count === max);
     let running = dueNow;
     const rows = [];
     const cols = buckets.map((b, i) => {
       running += b.count;
-      if (b.count) rows.push(`<tr><td>${fmtHour(b.at)}</td><td>${b.count}</td><td>${running}</td></tr>`);
+      const parts = split ? SPLITS[split].map(([k]) => `<td>${b[split][k] || ""}</td>`).join("") : "";
+      if (b.count) rows.push(`<tr><td>${fmtHour(b.at)}</td><td>${b.count}</td>${parts}<td>${running}</td></tr>`);
       const h = b.count ? Math.max(6, Math.round((100 * b.count) / max)) : 0;
-      const tip = `${fmtHour(b.at)}: ${b.count} new, ${running} in total`;
+      const tip = `${fmtHour(b.at)}: ${b.count} new${split && b.count ? ` (${splitText(b, split)})` : ""}, ${running} in total`;
       return `<div class="fc-col" tabindex="0" data-tip="${esc(tip)}" aria-label="${esc(tip)}">
         ${i === peak && b.count ? `<span class="fc-val" style="bottom:${h}%">${b.count}</span>` : ""}
-        <div class="fc-bar" style="height:${h}%"></div>
+        <div class="fc-bar${split ? " split" : ""}" style="height:${h}%">${split ? stackHTML(b, split) : ""}</div>
       </div>`;
     });
     const ticks = buckets.map((b, i) => `<span>${i % 6 === 0 ? fmtHour(b.at) : ""}</span>`).join("");
     const total = buckets.reduce((s, b) => s + b.count, 0);
+    const heads = split ? SPLITS[split].map(([, name]) => `<th>${name}</th>`).join("") : "";
     return `<section class="card">
-      <h2>Next 24 hours <span class="muted">+${total}</span></h2>
-      ${total ? `<div class="fc" role="img" aria-label="Reviews arriving each hour for the next 24 hours">${cols.join("")}</div><div class="fc-ticks">${ticks}</div>
-      <details class="fc-table"><summary>As a list</summary><table><thead><tr><th>At</th><th>New</th><th>Total</th></tr></thead><tbody>${rows.join("")}</tbody></table></details>`
+      <div class="fc-head"><h2>Next 24 hours <span class="muted">+${total}</span></h2>${total ? splitToggle() : ""}</div>
+      ${total ? `<div class="fc" role="img" aria-label="Reviews arriving each hour for the next 24 hours${split ? `, split by ${split === "type" ? "item type" : "SRS stage"}` : ""}">${cols.join("")}</div><div class="fc-ticks">${ticks}</div>
+      ${split ? splitLegend(buckets, split) : ""}
+      <details class="fc-table"><summary>As a list</summary><table><thead><tr><th>At</th><th>New</th>${heads}<th>Total</th></tr></thead><tbody>${rows.join("")}</tbody></table></details>`
         : `<p class="muted">Nothing new in the next 24 hours.</p>`}
     </section>`;
   }
@@ -1248,8 +1271,17 @@
     const week = I.forecastDays(model, now, 7);
     const dueNow = I.reviewsDue(model, now, skipSet()).length;
     const wmax = Math.max(1, ...week.map((b) => b.count));
-    const weekRows = week.map((b, i) => `<tr><td>${i ? new Date(b.at).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) : "Rest of today"}</td>
-        <td class="num">${n(b.count)}</td><td class="ltbar"><span style="width:${b.count ? Math.max(1, (100 * b.count) / wmax) : 0}%"></span></td></tr>`).join("");
+    const split = splitOf();
+    const dayName = (b, i) => (i ? new Date(b.at).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) : "Rest of today");
+    const weekRows = week.map((b, i) => {
+      const w = b.count ? Math.max(1, (100 * b.count) / wmax) : 0;
+      const bar = split && b.count ? `<span class="stack" style="width:${w}%" title="${esc(splitText(b, split))}">${stackHTML(b, split)}</span>` : `<span style="width:${w}%"></span>`;
+      return `<tr><td>${dayName(b, i)}</td><td class="num">${n(b.count)}</td><td class="ltbar">${bar}</td></tr>`;
+    }).join("");
+    const weekList = split
+      ? `<details class="fc-table"><summary>As a list</summary><table><thead><tr><th>Day</th><th>Reviews</th>${SPLITS[split].map(([, name]) => `<th>${name}</th>`).join("")}</tr></thead>
+        <tbody>${week.map((b, i) => `<tr><td>${dayName(b, i)}</td><td>${n(b.count)}</td>${SPLITS[split].map(([k]) => `<td>${b[split][k] || ""}</td>`).join("")}</tr>`).join("")}</tbody></table></details>`
+      : "";
 
     return `<header class="top"><h1>Stats</h1><nav class="topnav"><a class="btn small" href="#/">Home</a></nav></header>
       <section class="card">
@@ -1273,9 +1305,10 @@
         <p class="muted small">From when a level unlocked until you passed it. Levels left behind by a reset are not shown.</p>
       </section>
       <section class="card">
-        <h2>The week ahead</h2>
+        <div class="fc-head"><h2>The week ahead</h2>${splitToggle()}</div>
         <p>${n(dueNow)} due now, then:</p>
         <div class="tablewrap"><table class="lt"><tbody>${weekRows}</tbody></table></div>
+        ${split ? splitLegend(week, split) : ""}${weekList}
       </section>`;
   }
 

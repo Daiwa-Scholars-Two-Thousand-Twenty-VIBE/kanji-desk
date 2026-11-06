@@ -51,7 +51,23 @@ test("meanings: whitelist, blacklist and your synonyms", () => {
 test("meanings: Japanese or empty input shakes instead of counting", () => {
   assert.equal(C.checkMeaning(S(13), "ひと").result, "invalid");
   assert.equal(C.checkMeaning(S(13), "人").result, "invalid");
+  assert.match(C.checkMeaning(S(13), "人").message, /^Not quite: that is Japanese/);
   assert.equal(C.checkMeaning(S(13), "   ").result, "invalid");
+});
+
+test("meanings: the reading in the meaning box shakes, in kana or romaji", () => {
+  for (const a of ["ひと", "jin", "Hito", "nin"]) {
+    const r = C.checkMeaning(S(13), a);
+    assert.equal(r.result, "invalid", a);
+    assert.match(r.message, /that is the reading/, a);
+  }
+  assert.equal(C.checkMeaning(S(21), "nihon").result, "invalid"); // vocabulary too
+  // Someone else's reading is just a wrong meaning.
+  assert.equal(C.checkMeaning(S(20), "nihon").result, "wrong");
+  // A meaning that is also a reading in romaji still counts as the meaning.
+  const sake = { object: "vocabulary", data: { meanings: [{ meaning: "Sake", primary: true, accepted_answer: true }], readings: [{ reading: "さけ", primary: true, accepted_answer: true }] } };
+  assert.equal(C.checkMeaning(sake, "sake").result, "exact");
+  assert.equal(C.checkReading(sake, "sake").result, "exact");
 });
 
 test("readings: kana, romaji and katakana all work", () => {
@@ -81,9 +97,27 @@ test("readings: a kanji's other reading shakes and names the wanted one", () => 
 
 test("readings: letters that cannot become kana shake", () => {
   // Romaji that fully converts is just a wrong reading, as the kana box would show it.
-  assert.equal(C.checkReading(S(20), "population").result, "wrong");
+  assert.equal(C.checkReading(S(20), "same").result, "wrong");
   assert.equal(C.checkReading(S(20), "jinkou1").result, "invalid");
   assert.equal(C.checkReading(S(20), "人口").result, "invalid");
+  const r = C.checkReading(S(20), "hand");
+  assert.equal(r.result, "invalid");
+  assert.match(r.message, /looks like English/);
+});
+
+test("readings: the meaning in the reading box shakes, even once it is kana", () => {
+  // The kana box turns English into kana as you type: population -> ぽぷらちおん, eye -> えいぇ.
+  for (const [id, a] of [[20, "population"], [20, "ぽぷらちおん"], [20, "Population"], [12, "eye"], [12, "えいぇ"], [15, "tree"], [13, "person"], [22, "one person"]]) {
+    const r = C.checkReading(S(id), a);
+    assert.equal(r.result, "invalid", `${id} ${a}`);
+    assert.match(r.message, /that is the meaning/, `${id} ${a}`);
+  }
+  assert.equal(C.checkReading(S(20), "populaton").result, "invalid"); // a typo of a long meaning too
+  assert.equal(C.checkReading(S(13), "people").result, "invalid"); // whitelisted meanings
+  assert.equal(C.checkReading(S(13), "human").result, "wrong"); // ふまん: not one of its meanings, so a wrong reading
+  assert.equal(C.check(S(13), "reading", "human", ["human"]).result, "invalid"); // your synonyms count as meanings
+  assert.match(C.check(S(13), "reading", "human", ["human"]).message, /that is the meaning/);
+  assert.equal(C.checkReading(S(12), "えい").result, "wrong"); // short meanings need an exact match
 });
 
 test("what counts", () => {

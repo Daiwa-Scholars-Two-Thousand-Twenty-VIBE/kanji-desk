@@ -22,7 +22,8 @@ There is also a demo with made-up items (the **Try the demo first** button). It 
 
 | Feature | Like |
 |---|---|
-| Reviews and lessons, with WaniKani's answer rules: your synonyms, accepted and blocked meanings, small typos forgiven on longer words, a shake (not a miss) for a kanji's other reading or for Japanese typed into the meaning box | the site |
+| Reviews and lessons, with WaniKani's answer rules: your synonyms, accepted and blocked meanings, small typos forgiven on longer words, a shake (not a miss) for a kanji's other reading | the site |
+| **Wrong box**: a shake and a "Not quite" note (not a miss) when you type in the wrong language for the box: the meaning in the reading box (even after the box has turned it into kana, so "eye" showing as えいぇ is caught), or the reading or any Japanese in the meaning box | the site |
 | **Retype, mark right, mark wrong** before moving on. An item is only sent once both halves are final. After a wrong answer Next waits 1.5 seconds (Settings can change it), so a quick second Enter cannot skip a typo that Backspace would undo | Double-Check |
 | **Review order and filters**: shuffled, lower or higher levels first, current level first, lowest or highest SRS stage first, radicals then kanji then vocabulary, most overdue first, waiting longest first. Include or leave out radicals, kanji, vocabulary. Cap the session at 10, 20, 30, 50 or 100 | Reorder Omega |
 | Meaning first, reading first or random. **Both halves back to back.** Items in play at once (1 to 20) | Reorder Omega |
@@ -41,7 +42,7 @@ There is also a demo with made-up items (the **Try the demo first** button). It 
 | **Self-study quiz** (nothing sent) on any filtered set: meaning and reading, or one half only. Item info stays hidden until you answer | Self-Study Quiz, Self-Study Hide Info |
 | **Extra practice** (nothing sent): recent mistakes on this device, and leeches from your WaniKani stats | Leech Trainer, extra study |
 | **Stats**: a year heatmap of reviews done here or lessons on any device, with streak and busiest day. Time on each level and your median, and time so far on the level you are on. Reviews per day for the week ahead | Heatmap, Level Duration 2 |
-| Next 24 hours forecast, level progress, SRS counts, search by kanji, kana, romaji or English | the dashboard |
+| Next 24 hours forecast, level progress, SRS counts, search by kanji, kana, romaji or English. The forecast and the week ahead have a **Total / Type / SRS stage** toggle that stacks each bar by radicals, kanji and vocabulary, or by Apprentice, Guru, Master and Enlightened, in WaniKani's colours | the dashboard, Ultimate Timeline |
 | **Offline**: answers made offline are kept and sent, with the time you really answered, when you are back online. Installable on a phone or desktop | Flaming Durtles |
 | Light and dark themes | |
 

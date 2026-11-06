@@ -85,6 +85,22 @@ test("forecast buckets by clock hour", () => {
   assert.equal(f.reduce((n, b) => n + b.count, 0), 2);
 });
 
+test("forecast buckets split by item type and SRS stage", () => {
+  const m = model();
+  m.bySubject.get(22).data.srs_stage = 7; // Master
+  const f = I.forecast(m, NOW, 24);
+  assert.deepEqual(f[3].type, { radical: 1, kanji: 0, vocabulary: 0 });
+  assert.deepEqual(f[3].stage, { apprentice: 1, guru: 0, master: 0, enlightened: 0 });
+  assert.deepEqual(f[7].type, { radical: 0, kanji: 0, vocabulary: 1 });
+  assert.deepEqual(f[7].stage, { apprentice: 0, guru: 0, master: 1, enlightened: 0 });
+  // The splits always add up to the count, in the week ahead too.
+  for (const b of [...f, ...I.forecastDays(m, NOW, 7)]) {
+    const sum = (o) => Object.values(o).reduce((a, n) => a + n, 0);
+    assert.equal(sum(b.type), b.count);
+    assert.equal(sum(b.stage), b.count);
+  }
+});
+
 test("level progress counts kanji at Guru or above", () => {
   const m = model();
   m.user.data.level = 2;

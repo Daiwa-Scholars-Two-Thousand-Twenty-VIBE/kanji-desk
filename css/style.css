@@ -22,6 +22,14 @@
   --rad-bg: linear-gradient(to bottom, #00aaff, #0093dd);
   --kan-bg: linear-gradient(to bottom, #ff00aa, #dd0093);
   --voc-bg: linear-gradient(to bottom, #aa00ff, #9300dd);
+  /* Chart series: item types in the colours above, SRS stages in WaniKani's stage colours. */
+  --c-radical: #00aaff;
+  --c-kanji: #ff00aa;
+  --c-vocabulary: #aa00ff;
+  --c-apprentice: #dd0093;
+  --c-guru: #882d9e;
+  --c-master: #294ddb;
+  --c-enlightened: #0093dd;
   --reading-bg: #26252a;
   --reading-fg: #f4f2ec;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.04);
@@ -33,6 +41,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
+    --c-radical: #0093dd; /* WaniKani's darker radical blue: the bright one glares on a dark card */
     --bg: #131417;
     --panel: #1c1d22;
     --panel-2: #25272e;
@@ -53,6 +62,7 @@
   }
 }
 :root.dark {
+  --c-radical: #0093dd;
   --bg: #131417;
   --panel: #1c1d22;
   --panel-2: #25272e;
@@ -210,7 +220,8 @@ input[type="number"] { width: 6em; }
   bottom: calc(100% + 2px);
   left: 50%;
   transform: translateX(-50%);
-  white-space: nowrap;
+  width: max-content;
+  max-width: 220px; /* a split tip is longer: it wraps instead of running off a phone screen */
   background: var(--fg);
   color: var(--bg);
   font-size: 0.75rem;
@@ -219,8 +230,33 @@ input[type="number"] { width: 6em; }
   z-index: 2;
   pointer-events: none;
 }
-.fc-col:first-child:hover::after, .fc-col:first-child:focus::after { left: 0; transform: none; }
-.fc-col:last-child:hover::after, .fc-col:last-child:focus::after { left: auto; right: 0; transform: none; }
+/* Tips on the outer thirds of the 24 hours open inwards, so they stay on screen. */
+.fc-col:nth-child(-n+8):hover::after, .fc-col:nth-child(-n+8):focus::after { left: 0; transform: none; }
+.fc-col:nth-last-child(-n+8):hover::after, .fc-col:nth-last-child(-n+8):focus::after { left: auto; right: 0; transform: none; }
+/* A split bar: stacked segments with a 2px gap, the first series at the bottom. */
+.fc-bar.split { display: flex; flex-direction: column-reverse; gap: 2px; background: none; overflow: hidden; }
+.fc-seg { display: block; flex: 1 1 0; min-height: 2px; min-width: 2px; }
+.c-radical { background: var(--c-radical); }
+.c-kanji { background: var(--c-kanji); }
+.c-vocabulary { background: var(--c-vocabulary); }
+.c-apprentice { background: var(--c-apprentice); }
+.c-guru { background: var(--c-guru); }
+.c-master { background: var(--c-master); }
+.c-enlightened { background: var(--c-enlightened); }
+.fc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; margin-bottom: 0.5rem; }
+.fc-head h2 { margin: 0; }
+.fc-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; font-size: 0.8rem; }
+.fc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+/* Total / Type / SRS stage: native radios, drawn as one pill. */
+.segs { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); }
+.seg-opt { position: relative; }
+.seg-opt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.seg-opt span { display: block; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; color: var(--muted); }
+.seg-opt input:checked + span { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); }
+.seg-opt input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ltbar span.stack { display: flex; gap: 2px; background: none; opacity: 1; overflow: hidden; }
+.stack .fc-seg { height: 100%; }
 .fc-ticks { display: flex; gap: 2px; font-size: 0.7rem; color: var(--muted); }
 .fc-ticks span { flex: 1; white-space: nowrap; overflow: visible; }
 .fc-table { margin-top: 8px; font-size: 0.85rem; }
@@ -399,10 +435,10 @@ input[type="number"] { width: 6em; }
 .chip-m { font-size: 0.8rem; color: var(--muted); }
 .chip-s { font-size: 0.72rem; color: var(--muted); }
 .chip-st { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
-.chip-st.g-apprentice { background: #e8590c; }
-.chip-st.g-guru { background: #5f3dc4; }
-.chip-st.g-master { background: #1971c2; }
-.chip-st.g-enlightened { background: #0c8599; }
+.chip-st.g-apprentice { background: var(--c-apprentice); }
+.chip-st.g-guru { background: var(--c-guru); }
+.chip-st.g-master { background: var(--c-master); }
+.chip-st.g-enlightened { background: var(--c-enlightened); }
 .chip-st.g-burned { background: #495057; }
 @media (prefers-color-scheme: dark) { :root:not(.light) .chip-c .rad-img { filter: invert(1); } }
 :root.dark .chip-c .rad-img { filter: invert(1); }
